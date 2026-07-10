@@ -34,6 +34,8 @@ import {
     versionTimeoutSeconds,
     normalizeTimeoutSeconds,
     deviceTargetArgs,
+    selectedDevice,
+    writeStdin,
 } from "./runtime.mjs";
 
 const instances = new Map();
@@ -90,6 +92,82 @@ function resolveScriptPath(instance, name) {
         throw new Error("Resolved file path escapes the scripts directory.");
     }
     return full;
+}
+
+const WIFI_SECURITIES = ["none", "wep", "psk", "psk2", "wpa", "wpa2"];
+const AP_SECURITIES = ["none", "wep", "psk", "psk2"];
+
+function validateSecurity(value, allowed) {
+    if (value == null || value === "") {
+        return null;
+    }
+    const normalized = String(value).toLowerCase();
+    if (!allowed.includes(normalized)) {
+        throw new Error(`Unsupported security type: ${value}. Use one of ${allowed.join(", ")}.`);
+    }
+    return normalized;
+}
+
+// Build `t2 wifi ...` arguments for the requested action. `connect` needs an
+// SSID; password/security are optional. list/info/on/off ignore creds.
+function wifiArgs(instance, body) {
+    const action = body.action || "info";
+    const args = ["wifi"];
+    if (action === "list") {
+        args.push("-l");
+    } else if (action === "on") {
+        args.push("--on");
+    } else if (action === "off") {
+        args.push("--off");
+    } else if (action === "connect") {
+        if (!body.ssid) {
+            throw new Error("SSID is required to connect to a network.");
+        }
+        args.push("-n", String(body.ssid));
+        if (body.password) {
+            args.push("-p", String(body.password));
+        }
+        const security = validateSecurity(body.security, WIFI_SECURITIES);
+        if (security) {
+            args.push("-s", security);
+        }
+    } else if (action !== "info") {
+        throw new Error(`Unknown wifi action: ${action}.`);
+    }
+    return [...args, ...deviceTargetArgs(instance)];
+}
+
+// Build `t2 ap ...` arguments. `create` needs an SSID; password/security optional.
+function apArgs(instance, body) {
+    const action = body.action || "info";
+    const args = ["ap"];
+    if (action === "on") {
+        args.push("--on");
+    } else if (action === "off") {
+        args.push("--off");
+    } else if (action === "create") {
+        if (!body.ssid) {
+            throw new Error("SSID is required to create an access point.");
+        }
+        args.push("-n", String(body.ssid));
+        if (body.password) {
+            args.push("-p", String(body.password));
+        }
+        const security = validateSecurity(body.security, AP_SECURITIES);
+        if (security) {
+            args.push("-s", security);
+        }
+    } else if (action !== "info") {
+        throw new Error(`Unknown ap action: ${action}.`);
+    }
+    return [...args, ...deviceTargetArgs(instance)];
+}
+
+// `t2 root` opens an interactive SSH shell. It forces a LAN connection, so we
+// never pass --usb; --name helps disambiguate when a device is selected.
+function rootArgs(instance) {
+    const device = selectedDevice(instance);
+    return device ? ["root", "--name", device.name] : ["root"];
 }
 
 async function refreshFiles(instance) {
@@ -251,6 +329,55 @@ function renderHtml(instanceId) {
       .entry .cmd { font-weight: var(--font-weight-semibold, 600); }
       .entry .meta { color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
       .entry pre { white-space: pre-wrap; margin: 6px 0 0; }
+      .modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        align-items: center;
+        justify-content: center;
+        z-index: 20;
+      }
+      .modal-backdrop.open { display: flex; }
+      .modal {
+        background: var(--background-color-default, #fff);
+        color: var(--text-color-default, #1f2328);
+        border: 1px solid var(--border-color-default, #d1d9e0);
+        border-radius: 10px;
+        width: min(440px, 92vw);
+        max-height: 90vh;
+        overflow: auto;
+        padding: 16px 18px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+      }
+      .modal h3 { margin: 0 0 4px; font-size: var(--text-title-small, 16px); }
+      .modal p.hint { margin: 0 0 12px; color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
+      .modal .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+      .modal .row > span { font-size: var(--text-body-small, 12px); color: var(--text-color-muted, #59636e); }
+      .modal .row input, .modal .row select { width: 100%; box-sizing: border-box; }
+      .modal .inline { display: flex; gap: 6px; align-items: center; }
+      .modal .inline input { flex: 1; }
+      .modal .check { flex-direction: row; align-items: center; gap: 6px; }
+      .modal .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+      .modal .actions .spacer { flex: 1; }
+      .saved-list { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+      .saved-item {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px 8px; border: 1px solid var(--border-color-default, #d1d9e0);
+        border-radius: 6px; font-size: var(--text-body-small, 12px);
+      }
+      .saved-item .name { flex: 1; font-family: var(--font-mono, Consolas, monospace); cursor: pointer; }
+      .saved-item button { padding: 2px 6px; font-size: var(--text-body-small, 12px); }
+      .stdin-input {
+        min-width: 200px;
+        flex: 1;
+        font-family: var(--font-mono, Consolas, monospace);
+      }
+      .console-head .ssh-tag {
+        font-size: var(--text-body-small, 12px);
+        color: var(--true-color-blue, #0969da);
+        font-weight: var(--font-weight-semibold, 600);
+      }
     </style>
   </head>
   <body>
@@ -266,6 +393,9 @@ function renderHtml(instanceId) {
           <button id="listDevicesBtn">List Tessels</button>
           <button id="versionBtn" title="Read firmware/CLI version from the selected Tessel">Version</button>
           <button id="provisionBtn" title="Authorize this computer to control the USB-connected Tessel">Provision</button>
+          <button id="wifiBtn" title="Configure the Tessel's Wi-Fi client">Wi-Fi</button>
+          <button id="apBtn" title="Configure the Tessel as an access point">Access point</button>
+          <button id="sshBtn" title="Open an interactive SSH shell (requires Wi-Fi/LAN)">SSH</button>
           <select id="deviceSelect" title="Target device"></select>
           <button id="settingsBtn" class="subtle" title="Diagnostics &amp; settings">&#9881; Settings</button>
           <span id="status" class="status">Ready</span>
@@ -302,11 +432,50 @@ function renderHtml(instanceId) {
           <strong>Device output</strong>
           <input id="customCmd" class="cmd-input" placeholder="t2 subcommand, e.g. list --lan" />
           <button id="runCustomBtn">Run</button>
+          <span id="sshTag" class="ssh-tag" style="display:none">SSH</span>
+          <input id="stdinInput" class="stdin-input" placeholder="Type a shell command, press Enter" style="display:none" />
           <span class="spacer" style="flex:1"></span>
           <button id="sendBtn">Send output to chat</button>
           <button id="clearBtn">Clear view</button>
         </div>
         <div id="console" class="console-body">No commands run yet.</div>
+      </div>
+    </div>
+    <div id="netModal" class="modal-backdrop">
+      <div class="modal">
+        <h3 id="netTitle">Wi-Fi</h3>
+        <p class="hint" id="netHint"></p>
+        <div id="savedWrap">
+          <div class="saved-list" id="savedList"></div>
+        </div>
+        <div class="row">
+          <span>Network name (SSID)</span>
+          <input id="netSsid" placeholder="MyNetwork" autocomplete="off" />
+        </div>
+        <div class="row">
+          <span>Password</span>
+          <div class="inline">
+            <input id="netPassword" type="password" placeholder="(leave blank for open network)" autocomplete="off" />
+            <button id="netShowPass" type="button" class="subtle">Show</button>
+          </div>
+        </div>
+        <div class="row">
+          <span>Security</span>
+          <select id="netSecurity"></select>
+        </div>
+        <div class="row check">
+          <input id="netRemember" type="checkbox" checked />
+          <label for="netRemember">Remember this network on this machine</label>
+        </div>
+        <div class="actions">
+          <button id="netPrimaryBtn" class="primary">Connect</button>
+          <button id="netInfoBtn">Info</button>
+          <button id="netListBtn">List</button>
+          <button id="netOnBtn">On</button>
+          <button id="netOffBtn">Off</button>
+          <span class="spacer"></span>
+          <button id="netCloseBtn" class="subtle">Close</button>
+        </div>
       </div>
     </div>
     <script src="${cdn}/codemirror.min.js"></script>
@@ -339,6 +508,26 @@ function renderHtml(instanceId) {
       const runCustomBtn = document.getElementById("runCustomBtn");
       const sendBtn = document.getElementById("sendBtn");
       const clearBtn = document.getElementById("clearBtn");
+      const wifiBtn = document.getElementById("wifiBtn");
+      const apBtn = document.getElementById("apBtn");
+      const sshBtn = document.getElementById("sshBtn");
+      const stdinInput = document.getElementById("stdinInput");
+      const sshTag = document.getElementById("sshTag");
+      const netModal = document.getElementById("netModal");
+      const netTitle = document.getElementById("netTitle");
+      const netHint = document.getElementById("netHint");
+      const savedList = document.getElementById("savedList");
+      const netSsid = document.getElementById("netSsid");
+      const netPassword = document.getElementById("netPassword");
+      const netShowPass = document.getElementById("netShowPass");
+      const netSecurity = document.getElementById("netSecurity");
+      const netRemember = document.getElementById("netRemember");
+      const netPrimaryBtn = document.getElementById("netPrimaryBtn");
+      const netInfoBtn = document.getElementById("netInfoBtn");
+      const netListBtn = document.getElementById("netListBtn");
+      const netOnBtn = document.getElementById("netOnBtn");
+      const netOffBtn = document.getElementById("netOffBtn");
+      const netCloseBtn = document.getElementById("netCloseBtn");
 
       let timeoutsDirty = false;
       let cliDirty = false;
@@ -510,7 +699,16 @@ function renderHtml(instanceId) {
         renderDevices();
         renderSettings();
         renderConsole();
+        renderSsh();
         updateStatus();
+      }
+
+      function renderSsh() {
+        const running = latestState && latestState.running;
+        const isSsh = !!(running && running.kind === "ssh");
+        stdinInput.style.display = isSsh ? "block" : "none";
+        sshTag.style.display = isSsh ? "inline" : "none";
+        sshBtn.disabled = !!running && !isSsh;
       }
 
       async function openFile(name) {
@@ -643,6 +841,145 @@ function renderHtml(instanceId) {
         post("/api/send-output", {})
           .then(function () { updateStatus("Output sent to chat."); })
           .catch(function (error) { updateStatus(error.message); });
+      });
+
+      // --- Wi-Fi / Access point modal ---------------------------------------
+      var WIFI_SECURITIES = ["none", "wep", "psk", "psk2", "wpa", "wpa2"];
+      var AP_SECURITIES = ["none", "wep", "psk", "psk2"];
+      var netMode = "wifi";
+
+      function storageKey() { return netMode === "ap" ? "tessel.ap.networks" : "tessel.wifi.networks"; }
+
+      function loadSaved() {
+        try {
+          var raw = localStorage.getItem(storageKey());
+          var list = raw ? JSON.parse(raw) : [];
+          return Array.isArray(list) ? list : [];
+        } catch (e) { return []; }
+      }
+      function persistSaved(list) {
+        try { localStorage.setItem(storageKey(), JSON.stringify(list)); } catch (e) { /* ignore */ }
+      }
+      function rememberNetwork(entry) {
+        if (!entry.ssid) return;
+        var list = loadSaved().filter(function (n) { return n.ssid !== entry.ssid; });
+        list.unshift({ ssid: entry.ssid, password: entry.password || "", security: entry.security || "" });
+        persistSaved(list);
+        renderSaved();
+      }
+      function forgetNetwork(ssid) {
+        persistSaved(loadSaved().filter(function (n) { return n.ssid !== ssid; }));
+        renderSaved();
+      }
+      function renderSaved() {
+        var list = loadSaved();
+        if (!list.length) {
+          savedList.innerHTML = '<div class="muted" style="padding:2px 0">No saved networks yet.</div>';
+          return;
+        }
+        savedList.innerHTML = list
+          .map(function (n) {
+            return (
+              '<div class="saved-item">' +
+              '<span class="name" data-fill="' + escAttr(n.ssid) + '">' + escHtml(n.ssid) +
+              (n.security ? ' <span style="opacity:.6">(' + escHtml(n.security) + ")</span>" : "") +
+              "</span>" +
+              '<button data-forget="' + escAttr(n.ssid) + '">Forget</button>' +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+      function fillFromSaved(ssid) {
+        var match = loadSaved().find(function (n) { return n.ssid === ssid; });
+        if (!match) return;
+        netSsid.value = match.ssid;
+        netPassword.value = match.password || "";
+        netSecurity.value = match.security || "none";
+      }
+      savedList.addEventListener("click", function (event) {
+        var t = event.target;
+        if (!t || !t.dataset) return;
+        if (t.dataset.fill != null) { fillFromSaved(t.dataset.fill); }
+        else if (t.dataset.forget != null) { forgetNetwork(t.dataset.forget); }
+      });
+
+      function openNetModal(mode) {
+        netMode = mode;
+        var isAp = mode === "ap";
+        netTitle.textContent = isAp ? "Access point" : "Wi-Fi";
+        netHint.textContent = isAp
+          ? "Broadcast a network from the Tessel. Passwords are stored only in this browser."
+          : "Connect the Tessel to a wireless network. Passwords are stored only in this browser.";
+        netPrimaryBtn.textContent = isAp ? "Create" : "Connect";
+        netListBtn.style.display = isAp ? "none" : "";
+        var securities = isAp ? AP_SECURITIES : WIFI_SECURITIES;
+        netSecurity.innerHTML = securities
+          .map(function (s) { return '<option value="' + s + '">' + s + "</option>"; })
+          .join("");
+        netSecurity.value = "none";
+        renderSaved();
+        netModal.classList.add("open");
+        netSsid.focus();
+      }
+      function closeNetModal() { netModal.classList.remove("open"); }
+
+      function currentNetPayload(action) {
+        return {
+          action: action,
+          ssid: netSsid.value.trim(),
+          password: netPassword.value,
+          security: netSecurity.value,
+        };
+      }
+      function sendNet(action) {
+        var endpoint = netMode === "ap" ? "/api/ap" : "/api/wifi";
+        var payload = currentNetPayload(action);
+        var primaryAction = netMode === "ap" ? "create" : "connect";
+        if (action === primaryAction && netRemember.checked) {
+          rememberNetwork(payload);
+        }
+        hideOutput = false;
+        post(endpoint, payload)
+          .then(function () {
+            updateStatus((netMode === "ap" ? "AP " : "Wi-Fi ") + action + "...");
+            if (action === primaryAction || action === "on" || action === "off") { closeNetModal(); }
+          })
+          .catch(function (error) { updateStatus(error.message); });
+      }
+
+      wifiBtn.addEventListener("click", function () { openNetModal("wifi"); });
+      apBtn.addEventListener("click", function () { openNetModal("ap"); });
+      netCloseBtn.addEventListener("click", closeNetModal);
+      netModal.addEventListener("click", function (event) {
+        if (event.target === netModal) closeNetModal();
+      });
+      netShowPass.addEventListener("click", function () {
+        var showing = netPassword.type === "text";
+        netPassword.type = showing ? "password" : "text";
+        netShowPass.textContent = showing ? "Show" : "Hide";
+      });
+      netPrimaryBtn.addEventListener("click", function () {
+        sendNet(netMode === "ap" ? "create" : "connect");
+      });
+      netInfoBtn.addEventListener("click", function () { sendNet("info"); });
+      netListBtn.addEventListener("click", function () { sendNet("list"); });
+      netOnBtn.addEventListener("click", function () { sendNet("on"); });
+      netOffBtn.addEventListener("click", function () { sendNet("off"); });
+
+      // --- Interactive SSH ---------------------------------------------------
+      sshBtn.addEventListener("click", function () {
+        hideOutput = false;
+        post("/api/ssh")
+          .then(function () { updateStatus("Opening SSH shell..."); stdinInput.focus(); })
+          .catch(function (error) { updateStatus(error.message); });
+      });
+      stdinInput.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        var data = stdinInput.value;
+        stdinInput.value = "";
+        post("/api/stdin", { data: data }).catch(function (error) { updateStatus(error.message); });
       });
       fileList.addEventListener("click", function (event) {
         const name = event.target && event.target.dataset ? event.target.dataset.file : null;
@@ -959,6 +1296,51 @@ async function createInstance(instanceId, workspacePath) {
             return;
         }
 
+        if (req.method === "POST" && pathname === "/api/wifi") {
+            try {
+                const body = await parseJsonBody(req);
+                const args = wifiArgs(instance, body);
+                const started = await startCommand(instance, args, { kind: "wifi" });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/ap") {
+            try {
+                const body = await parseJsonBody(req);
+                const args = apArgs(instance, body);
+                const started = await startCommand(instance, args, { kind: "ap" });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/ssh") {
+            try {
+                const started = await startCommand(instance, rootArgs(instance), { kind: "ssh" });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/stdin") {
+            try {
+                const body = await parseJsonBody(req);
+                const result = writeStdin(instance, body.data);
+                json(res, 200, result);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
         if (req.method === "POST" && pathname === "/api/select-device") {
             try {
                 const body = await parseJsonBody(req);
@@ -1263,6 +1645,66 @@ export function createEditorCanvas() {
                     const instance = requireInstance(ctx);
                     return await startCommand(instance, ["provision"], { kind: "provision" });
                 },
+            },
+            {
+                name: "configure_wifi",
+                description:
+                    "Configure the Tessel's Wi-Fi client. action: info | list | connect | on | off. connect needs ssid (password/security optional).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        action: { type: "string", enum: ["info", "list", "connect", "on", "off"] },
+                        ssid: { type: "string" },
+                        password: { type: "string" },
+                        security: { type: "string", enum: WIFI_SECURITIES },
+                    },
+                    required: ["action"],
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return await startCommand(instance, wifiArgs(instance, ctx.input), { kind: "wifi" });
+                },
+            },
+            {
+                name: "configure_ap",
+                description:
+                    "Configure the Tessel as an access point. action: info | create | on | off. create needs ssid (password/security optional).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        action: { type: "string", enum: ["info", "create", "on", "off"] },
+                        ssid: { type: "string" },
+                        password: { type: "string" },
+                        security: { type: "string", enum: AP_SECURITIES },
+                    },
+                    required: ["action"],
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return await startCommand(instance, apArgs(instance, ctx.input), { kind: "ap" });
+                },
+            },
+            {
+                name: "start_ssh",
+                description:
+                    "Open an interactive SSH root shell to the Tessel (`t2 root`). Requires the Tessel on Wi-Fi and provisioned; use send_stdin to type commands and kill_command to end it.",
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return await startCommand(instance, rootArgs(instance), { kind: "ssh" });
+                },
+            },
+            {
+                name: "send_stdin",
+                description: "Send a line of input to the currently running interactive command (e.g. the SSH shell).",
+                inputSchema: {
+                    type: "object",
+                    properties: { data: { type: "string" } },
+                    required: ["data"],
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => writeStdin(requireInstance(ctx), ctx.input.data),
             },
             {
                 name: "select_device",

@@ -298,6 +298,7 @@ export function snapshot(instance) {
                       id: instance.running.id,
                       command: instance.running.command,
                       startedAt: instance.running.startedAt,
+                      kind: instance.running.kind,
                   },
         history: instance.history.map((entry) => ({
             id: entry.id,
@@ -466,6 +467,7 @@ export async function startCommand(instance, args, meta = {}) {
         id,
         command: invocation.display,
         startedAt: entry.startedAt,
+        kind: meta.kind,
         child,
         entry,
     };
@@ -549,6 +551,22 @@ export async function killRunningCommand(instance) {
     instance.running = null;
     emitState(instance);
     return { killed: true, commandId: entry.id };
+}
+
+// Feed a line of input to the currently running command's stdin. Used by the
+// interactive SSH session: the spawned `t2 root` process inherits its stdio to
+// the underlying `ssh` child, so writing here lands on the remote shell.
+export function writeStdin(instance, data) {
+    if (!instance.running || !instance.running.child) {
+        throw new Error("No interactive command is running.");
+    }
+    const child = instance.running.child;
+    if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
+        throw new Error("The running command is not accepting input.");
+    }
+    const text = typeof data === "string" ? data : "";
+    child.stdin.write(text.endsWith("\n") ? text : `${text}\n`);
+    return { written: true, commandId: instance.running.id };
 }
 
 export async function sendOutputToSession(instance, commandId) {
