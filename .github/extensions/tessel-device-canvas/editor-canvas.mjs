@@ -198,6 +198,7 @@ function renderHtml(instanceId) {
         <button id="stopBtn">Stop</button>
         <span class="spacer"></span>
         <button id="listDevicesBtn">List Tessels</button>
+        <button id="provisionBtn" title="Authorize this computer to control the USB-connected Tessel">Provision</button>
         <select id="deviceSelect" title="Target device"></select>
         <span id="status" class="status">Ready</span>
       </div>
@@ -237,6 +238,7 @@ function renderHtml(instanceId) {
       const pushBtn = document.getElementById("pushBtn");
       const stopBtn = document.getElementById("stopBtn");
       const listDevicesBtn = document.getElementById("listDevicesBtn");
+      const provisionBtn = document.getElementById("provisionBtn");
       const sendBtn = document.getElementById("sendBtn");
       const clearBtn = document.getElementById("clearBtn");
 
@@ -462,6 +464,12 @@ function renderHtml(instanceId) {
       });
       listDevicesBtn.addEventListener("click", function () {
         post("/api/list-devices").catch(function (error) { updateStatus(error.message); });
+      });
+      provisionBtn.addEventListener("click", function () {
+        hideOutput = false;
+        post("/api/provision")
+          .then(function () { updateStatus("Provisioning..."); })
+          .catch(function (error) { updateStatus(error.message); });
       });
       deviceSelect.addEventListener("change", function () {
         post("/api/select-device", { id: deviceSelect.value || null }).catch(function (error) {
@@ -700,6 +708,16 @@ async function createInstance(instanceId, workspacePath) {
             return;
         }
 
+        if (req.method === "POST" && pathname === "/api/provision") {
+            try {
+                const started = await startCommand(instance, ["provision"], { kind: "provision" });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
         if (req.method === "POST" && pathname === "/api/select-device") {
             try {
                 const body = await parseJsonBody(req);
@@ -903,6 +921,14 @@ export function createEditorCanvas() {
                         kind: "list-devices",
                         timeoutSeconds: LIST_DISCOVERY_TIMEOUT_SECONDS,
                     });
+                },
+            },
+            {
+                name: "provision_device",
+                description: "Authorize this computer to control the USB-connected Tessel (`t2 provision`).",
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return await startCommand(instance, ["provision"], { kind: "provision" });
                 },
             },
             {
