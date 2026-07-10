@@ -33,6 +33,25 @@ const instances = new Map();
 const SCRIPTS_DIRNAME = "tessel-scripts";
 const NEW_FILE_BOILERPLATE = "const tessel = require('tessel');\n\n";
 
+// t2 run/push refuse to deploy a project that has no `.npmrc` (normally written
+// by `t2 init`). Since our scripts live in tessel-scripts/ and no package.json
+// exists up the tree, that folder becomes the deploy target, so we drop the same
+// `.npmrc` there ourselves. This avoids `t2 init` (which would also scaffold a
+// sample app) while still satisfying the deploy preflight.
+const NPMRC_CONTENT =
+    "# Created for Tessel 2 deployment (the single file `t2 init` requires to deploy).\n" +
+    "# Forces npm to install dependencies with the layout Tessel expects, restoring\n" +
+    "# .tesselignore/.tesselinclude control over what gets bundled onto the device.\n" +
+    "global-style = true\n";
+
+async function ensureScriptsDir(instance) {
+    await fs.mkdir(instance.scriptsDir, { recursive: true });
+    const npmrcPath = path.join(instance.scriptsDir, ".npmrc");
+    if (!existsSync(npmrcPath)) {
+        await fs.writeFile(npmrcPath, NPMRC_CONTENT, "utf8");
+    }
+}
+
 function sanitizeScriptName(raw) {
     if (typeof raw !== "string") {
         throw new Error("File name is required.");
@@ -66,7 +85,7 @@ function resolveScriptPath(instance, name) {
 }
 
 async function refreshFiles(instance) {
-    await fs.mkdir(instance.scriptsDir, { recursive: true });
+    await ensureScriptsDir(instance);
     const entries = await fs.readdir(instance.scriptsDir, { withFileTypes: true });
     instance.files = entries
         .filter((entry) => entry.isFile() && /\.js$/i.test(entry.name))
@@ -685,6 +704,7 @@ async function createInstance(instanceId, workspacePath) {
                     return;
                 }
                 const verb = pathname === "/api/run" ? "run" : "push";
+                await ensureScriptsDir(instance);
                 const relPath = path.join(SCRIPTS_DIRNAME, name);
                 const args = [verb, relPath, ...deviceTargetArgs(instance)];
                 const started = await startCommand(instance, args, { kind: verb });
@@ -888,6 +908,7 @@ export function createEditorCanvas() {
                     if (!existsSync(full)) {
                         throw new CanvasError("file_not_found", `File not found: ${name}`);
                     }
+                    await ensureScriptsDir(instance);
                     const args = ["run", path.join(SCRIPTS_DIRNAME, name), ...deviceTargetArgs(instance)];
                     return await startCommand(instance, args, { kind: "run" });
                 },
@@ -908,6 +929,7 @@ export function createEditorCanvas() {
                     if (!existsSync(full)) {
                         throw new CanvasError("file_not_found", `File not found: ${name}`);
                     }
+                    await ensureScriptsDir(instance);
                     const args = ["push", path.join(SCRIPTS_DIRNAME, name), ...deviceTargetArgs(instance)];
                     return await startCommand(instance, args, { kind: "push" });
                 },
