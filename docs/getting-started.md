@@ -111,6 +111,19 @@ INFO Node.js: 8.11.3
 
 ---
 
+## Recovery fallback (factory restore image)
+
+If `t2 restore` cannot fetch `new_build_next.tar.gz` from the default source, use the archived upstream factory image:
+
+`https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
+
+```powershell
+$env:T2_RESTORE_URL = "https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz"
+node .\bin\tessel-2.js restore --usb
+```
+
+---
+
 ## 6. Hello world app
 
 Create a project directory and write a minimal app:

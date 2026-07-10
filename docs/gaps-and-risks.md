@@ -56,6 +56,9 @@ node .\bin\tessel-2.js update `
   --openwrt-path  <path>\sysupgrade.bin
 ```
 
+For `t2 restore`, if the default `new_build_next.tar.gz` URL is unavailable, use the archived source:
+`https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
+
 ---
 
 ## OpenWrt upstream uplift

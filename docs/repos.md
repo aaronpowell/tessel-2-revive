@@ -39,7 +39,11 @@ The primary user-facing tool. All `t2 <command>` invocations go through here.
 T2_BUILDS_JSON_URL   — manifest URL  (default: raw GitHub master branch builds.json)
 T2_BUILDS_BASE_URL   — release asset base URL  (default: aaronpowell/t2-cli GitHub Releases)
 T2_FACTORY_URL       — restore/factory tarball URL
+T2_RESTORE_URL       — restore/factory tarball URL (used by current t2-cli code)
 ```
+
+Known archived fallback for restore image:
+`https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
 
 ---
 
