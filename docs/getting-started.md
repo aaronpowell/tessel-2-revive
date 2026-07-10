@@ -225,7 +225,7 @@ Full CLI reference: [tessel.gitbooks.io/t2-docs/content/API/CLI.html](https://te
 
 If you want to rebuild firmware or the OpenWrt image yourself rather than using pre-assembled artifacts:
 
-### SAMD21 firmware
+### SAMD21 firmware (WSL or Linux)
 ```bash
 cd repos/t2-firmware
 # requires gcc-arm-none-eabi
@@ -233,13 +233,19 @@ make
 # output: build/firmware.bin, build/boot.bin
 ```
 
-### OpenWrt image
-```bash
-cd repos/t2-build
-./openwrt-env.sh build-image   # one-time Docker image build
-./openwrt-env.sh host-tools    # build legacy host tools
-./openwrt-env.sh world         # full build (~1–2 hours first run)
-# output: ../openwrt/bin/ramips/openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin
+### OpenWrt image (Windows, Linux, or macOS — via Docker)
+```powershell
+# Works natively from Windows PowerShell with Docker Desktop installed.
+# No need to clone openwrt separately — the container handles it.
+git clone https://github.com/aaronpowell/t2-build.git
+cd t2-build
+docker compose run --rm build
+# output appears in ./output/
 ```
 
-See [`repos.md`](repos.md) for per-repo build details.
+The first run takes 1–2 hours (downloads sources + full build). Subsequent runs reuse the build cache and are much faster.
+
+For a shell inside the build environment:
+```powershell
+docker compose run --rm shell
+```

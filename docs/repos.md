@@ -84,21 +84,26 @@ t2-firmware/build/boot.bin       — DFU bootloader
 | **Branch** | `master` |
 | **Local path** | `repos/t2-build` |
 
-Build tooling and scripts for producing Tessel release images.
+Build tooling for producing Tessel release images. Works on **Windows, Linux, and macOS** via Docker.
 
 **What changed:**
-- Added `docker/openwrt-bionic/Dockerfile` — Ubuntu 18.04 container with Python 2, bundled cmake 2.8.12.2, and all legacy build dependencies
-- Added `openwrt-env.sh` wrapper script with commands: `build-image`, `host-tools`, `world`, `shell`, `exec`, `fix-perms`
-- Updated README with the preferred containerised build flow
+- Added `docker-compose.yml` — self-contained Windows-friendly build. Source lives in a Docker named Linux volume (avoids NTFS colon/case-sensitivity issues entirely). Artifacts exported to `./output/`.
+- Added `docker/openwrt-bionic/build-entrypoint.sh` — handles clone-on-first-run, host-tools build, world build, and artifact export.
+- Updated `docker/openwrt-bionic/Dockerfile` to use the entrypoint script.
+- Rewrote README with Windows-first quick start.
 
-**To build an OpenWrt image:**
-```bash
-cd repos/t2-build
-./openwrt-env.sh build-image   # build the Docker image once
-./openwrt-env.sh host-tools    # build fragile host tools inside container
-./openwrt-env.sh world         # full OpenWrt world build
+**To build an OpenWrt image (Windows, Linux, or macOS):**
+```powershell
+# clone t2-build on its own (no need to clone openwrt separately)
+git clone https://github.com/aaronpowell/t2-build.git
+cd t2-build
+docker compose run --rm build
+# artifacts appear in ./output/
 ```
-Output lands in `../openwrt/bin/ramips/`.
+
+The container clones `openwrt` and `openwrt-tessel` internally on first run — you never need to clone `openwrt` directly on Windows.
+
+Also available: `openwrt-env.sh` for direct Linux/WSL builds mounting a sibling workspace.
 
 ---
 
@@ -160,8 +165,11 @@ Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot (Barr
 **What changed:**
 - Fixed dead/legacy `git://` source fetch URLs for: `hostapd`, `usign`, `odhcpd`, `libubox`, `firewall`, `netifd`, `iwinfo`, `procd`, `ubox`, `ubus`, `uci`, `jsonfilter`
 - Fixed `libpcap` packaging/install failure
-- `tools/m4`: added `patches/110-glibc-change-work-around.patch` and `patches/120-c-stack-stop-using-sigstksz.patch` for modern glibc
-- `tools/make-ext4fs`: added `patches/100-include-sysmacros.patch` for modern kernel headers
+- `tools/m4`: added patches for modern glibc compatibility
+- `tools/make-ext4fs`: added patch for modern kernel headers
+- **Removed 348 `wwan` and `usbmode` VID:PID data files** — these used colon characters in filenames (e.g. `0421:03a7`) which prevented cloning on Windows. They were USB modem device descriptors unused by any Tessel build.
+
+> **Note:** You do not need to clone this repo directly on Windows. The `t2-build` Docker Compose setup clones it internally inside a Linux container volume.
 
 **Build output:**
 ```
