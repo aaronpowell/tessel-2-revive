@@ -26,6 +26,8 @@ The primary user-facing tool. All `t2 <command>` invocations go through here.
 **What changed:**
 - Replaced all references to dead Tessel infrastructure (`builds.tessel.io`, `rustcc.tessel.io`, `crash-reporter.tessel.io`) with configurable GitHub-based artifact URLs
 - Fixed Node 24+ / modern stream compatibility issue in `usb-connection.js`
+- Upgraded `usb` dependency to `^2.16.0` to support modern Node.js (20+ / 22)
+- Added USB daemon/process close fallback handling to prevent provision hangs when remote close events are missing
 - Made crash reporter non-blocking when unconfigured (prevents noise in tests)
 - Removed obsolete `npm rebuild --update-binary` flag from postinstall
 - Updated postinstall script so it no longer requires `t2` to be globally linked before `npm install` completes
