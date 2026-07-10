@@ -1,11 +1,13 @@
 // Tessel script editor canvas.
 //
-// A richer surface than the terminal: a CodeMirror-backed editor for authoring
-// Tessel scripts that live on disk under `tessel-scripts/` in the repo. It can
-// create new files (auto-injecting `require('tessel')`), open/save existing
+// A combined authoring + diagnostics surface: a CodeMirror-backed editor for
+// authoring Tessel scripts that live on disk under `tessel-scripts/` in the repo.
+// It can create new files (auto-injecting `require('tessel')`), open/save existing
 // ones, run them on the device (`t2 run <file>`) or deploy them to run on boot
-// (`t2 push <file>`), and streams the device output into a console. Process
-// plumbing is shared with the terminal via runtime.mjs.
+// (`t2 push <file>`), and streams the device output into a console. It also folds
+// in the device-terminal diagnostics: list Tessels, read version, provision,
+// configurable discovery timeouts, a settable CLI command, and an arbitrary t2
+// subcommand runner. Process plumbing is shared via runtime.mjs.
 
 import { createServer } from "node:http";
 import { promises as fs, existsSync } from "node:fs";
@@ -14,8 +16,10 @@ import { createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 import {
     PROJECT_REPO_ROOT,
     LIST_DISCOVERY_TIMEOUT_SECONDS,
+    VERSION_DISCOVERY_TIMEOUT_SECONDS,
     defaultCliTokens,
     escapeHtml,
+    toTokens,
     json,
     parseJsonBody,
     sseWrite,
@@ -25,6 +29,10 @@ import {
     killRunningCommand,
     sendOutputToSession,
     listCommandArgs,
+    versionCommandArgs,
+    listTimeoutSeconds,
+    versionTimeoutSeconds,
+    normalizeTimeoutSeconds,
     deviceTargetArgs,
 } from "./runtime.mjs";
 
@@ -143,6 +151,44 @@ function renderHtml(instanceId) {
         background: var(--true-color-blue, #0969da);
       }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
+      input {
+        border: 1px solid var(--border-color-default, #d1d9e0);
+        background: var(--background-color-default, #fff);
+        color: var(--text-color-default, #1f2328);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font: inherit;
+      }
+      button.subtle {
+        background: transparent;
+        border-color: transparent;
+        color: var(--text-color-muted, #59636e);
+      }
+      button.subtle:hover { border-color: var(--border-color-default, #d1d9e0); }
+      button.subtle.active {
+        border-color: var(--border-color-default, #d1d9e0);
+        background: var(--background-color-muted, #f6f8fa);
+        color: var(--text-color-default, #1f2328);
+      }
+      .settings {
+        display: none;
+        gap: 14px;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border-color-default, #d1d9e0);
+        background: var(--background-color-muted, #f6f8fa);
+      }
+      .settings.open { display: flex; }
+      .settings .field { display: inline-flex; align-items: center; gap: 6px; }
+      .settings .field > span { color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
+      .settings input[type="number"] { width: 58px; }
+      .settings input.cli { min-width: 320px; flex: 1; font-family: var(--font-mono, Consolas, monospace); }
+      .cmd-input {
+        min-width: 220px;
+        flex: 1;
+        font-family: var(--font-mono, Consolas, monospace);
+      }
       .status { color: var(--text-color-muted, #59636e); }
       .main { display: flex; min-height: 0; }
       .sidebar {
@@ -209,17 +255,38 @@ function renderHtml(instanceId) {
   </head>
   <body>
     <div class="layout">
-      <div class="toolbar">
-        <button id="newBtn">New file</button>
-        <button id="saveBtn">Save</button>
-        <button id="runBtn" class="primary">Run on device</button>
-        <button id="pushBtn">Push to device</button>
-        <button id="stopBtn">Stop</button>
-        <span class="spacer"></span>
-        <button id="listDevicesBtn">List Tessels</button>
-        <button id="provisionBtn" title="Authorize this computer to control the USB-connected Tessel">Provision</button>
-        <select id="deviceSelect" title="Target device"></select>
-        <span id="status" class="status">Ready</span>
+      <div class="header">
+        <div class="toolbar">
+          <button id="newBtn">New file</button>
+          <button id="saveBtn">Save</button>
+          <button id="runBtn" class="primary">Run on device</button>
+          <button id="pushBtn">Push to device</button>
+          <button id="stopBtn">Stop</button>
+          <span class="spacer"></span>
+          <button id="listDevicesBtn">List Tessels</button>
+          <button id="versionBtn" title="Read firmware/CLI version from the selected Tessel">Version</button>
+          <button id="provisionBtn" title="Authorize this computer to control the USB-connected Tessel">Provision</button>
+          <select id="deviceSelect" title="Target device"></select>
+          <button id="settingsBtn" class="subtle" title="Diagnostics &amp; settings">&#9881; Settings</button>
+          <span id="status" class="status">Ready</span>
+        </div>
+        <div id="settings" class="settings">
+          <label class="field">
+            <span>List timeout (s)</span>
+            <input id="listTimeout" type="number" min="0.1" step="0.1" />
+          </label>
+          <label class="field">
+            <span>Version timeout (s)</span>
+            <input id="versionTimeout" type="number" min="0.1" step="0.1" />
+          </label>
+          <button id="saveTimeoutsBtn">Apply timeouts</button>
+          <span class="spacer" style="flex:1"></span>
+          <label class="field">
+            <span>CLI</span>
+            <input id="cliCommand" class="cli" placeholder="node repos\\t2-cli\\bin\\tessel-2.js" />
+          </label>
+          <button id="saveCliBtn">Set CLI</button>
+        </div>
       </div>
       <div class="main">
         <div class="sidebar">
@@ -233,6 +300,8 @@ function renderHtml(instanceId) {
       <div class="console">
         <div class="console-head">
           <strong>Device output</strong>
+          <input id="customCmd" class="cmd-input" placeholder="t2 subcommand, e.g. list --lan" />
+          <button id="runCustomBtn">Run</button>
           <span class="spacer" style="flex:1"></span>
           <button id="sendBtn">Send output to chat</button>
           <button id="clearBtn">Clear view</button>
@@ -257,9 +326,22 @@ function renderHtml(instanceId) {
       const pushBtn = document.getElementById("pushBtn");
       const stopBtn = document.getElementById("stopBtn");
       const listDevicesBtn = document.getElementById("listDevicesBtn");
+      const versionBtn = document.getElementById("versionBtn");
       const provisionBtn = document.getElementById("provisionBtn");
+      const settingsBtn = document.getElementById("settingsBtn");
+      const settingsPanel = document.getElementById("settings");
+      const listTimeout = document.getElementById("listTimeout");
+      const versionTimeout = document.getElementById("versionTimeout");
+      const saveTimeoutsBtn = document.getElementById("saveTimeoutsBtn");
+      const cliCommand = document.getElementById("cliCommand");
+      const saveCliBtn = document.getElementById("saveCliBtn");
+      const customCmd = document.getElementById("customCmd");
+      const runCustomBtn = document.getElementById("runCustomBtn");
       const sendBtn = document.getElementById("sendBtn");
       const clearBtn = document.getElementById("clearBtn");
+
+      let timeoutsDirty = false;
+      let cliDirty = false;
 
       let latestState = null;
       let currentFile = null;
@@ -410,10 +492,23 @@ function renderHtml(instanceId) {
         consoleEl.scrollTop = consoleEl.scrollHeight;
       }
 
+      function renderSettings() {
+        const state = latestState || {};
+        const timeouts = state.timeouts || {};
+        if (!timeoutsDirty && document.activeElement !== listTimeout && document.activeElement !== versionTimeout) {
+          if (timeouts.list != null) listTimeout.value = timeouts.list;
+          if (timeouts.version != null) versionTimeout.value = timeouts.version;
+        }
+        if (!cliDirty && document.activeElement !== cliCommand) {
+          cliCommand.value = state.cliCommand || "";
+        }
+      }
+
       function renderState(state) {
         latestState = state;
         renderFiles();
         renderDevices();
+        renderSettings();
         renderConsole();
         updateStatus();
       }
@@ -484,11 +579,56 @@ function renderHtml(instanceId) {
       listDevicesBtn.addEventListener("click", function () {
         post("/api/list-devices").catch(function (error) { updateStatus(error.message); });
       });
+      versionBtn.addEventListener("click", function () {
+        hideOutput = false;
+        post("/api/get-version")
+          .then(function () { updateStatus("Reading version..."); })
+          .catch(function (error) { updateStatus(error.message); });
+      });
       provisionBtn.addEventListener("click", function () {
         hideOutput = false;
         post("/api/provision")
           .then(function () { updateStatus("Provisioning..."); })
           .catch(function (error) { updateStatus(error.message); });
+      });
+      settingsBtn.addEventListener("click", function () {
+        const open = settingsPanel.classList.toggle("open");
+        settingsBtn.classList.toggle("active", open);
+      });
+      function markTimeoutsDirty() { timeoutsDirty = true; }
+      listTimeout.addEventListener("input", markTimeoutsDirty);
+      versionTimeout.addEventListener("input", markTimeoutsDirty);
+      cliCommand.addEventListener("input", function () { cliDirty = true; });
+      saveTimeoutsBtn.addEventListener("click", function () {
+        post("/api/set-timeouts", { list: listTimeout.value, version: versionTimeout.value })
+          .then(function (res) {
+            timeoutsDirty = false;
+            if (res && res.timeouts) {
+              listTimeout.value = res.timeouts.list;
+              versionTimeout.value = res.timeouts.version;
+            }
+            updateStatus("Timeouts updated.");
+          })
+          .catch(function (error) { updateStatus(error.message); });
+      });
+      saveCliBtn.addEventListener("click", function () {
+        const value = cliCommand.value.trim();
+        if (!value) { updateStatus("Enter a CLI command first."); return; }
+        post("/api/set-cli", { command: value })
+          .then(function () { cliDirty = false; updateStatus("CLI command updated."); })
+          .catch(function (error) { updateStatus(error.message); });
+      });
+      function runCustom() {
+        const value = customCmd.value.trim();
+        if (!value) { updateStatus("Enter a t2 subcommand first."); return; }
+        hideOutput = false;
+        post("/api/run-custom", { subcommand: value })
+          .then(function () { customCmd.value = ""; updateStatus("Running " + value + "..."); })
+          .catch(function (error) { updateStatus(error.message); });
+      }
+      runCustomBtn.addEventListener("click", runCustom);
+      customCmd.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") { event.preventDefault(); runCustom(); }
       });
       deviceSelect.addEventListener("change", function () {
         post("/api/select-device", { id: deviceSelect.value || null }).catch(function (error) {
@@ -578,6 +718,10 @@ async function createInstance(instanceId, workspacePath) {
         scriptsDir: path.join(workspacePath || PROJECT_REPO_ROOT, SCRIPTS_DIRNAME),
         files: [],
         currentFile: null,
+        timeouts: {
+            list: LIST_DISCOVERY_TIMEOUT_SECONDS,
+            version: VERSION_DISCOVERY_TIMEOUT_SECONDS,
+        },
     };
 
     try {
@@ -717,11 +861,88 @@ async function createInstance(instanceId, workspacePath) {
 
         if (req.method === "POST" && pathname === "/api/list-devices") {
             try {
-                const started = await startCommand(instance, listCommandArgs(), {
+                const started = await startCommand(instance, listCommandArgs(instance), {
                     kind: "list-devices",
-                    timeoutSeconds: LIST_DISCOVERY_TIMEOUT_SECONDS,
+                    timeoutSeconds: listTimeoutSeconds(instance),
                 });
                 json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/get-version") {
+            try {
+                const started = await startCommand(instance, versionCommandArgs(instance), {
+                    kind: "get-version",
+                    timeoutSeconds: versionTimeoutSeconds(instance),
+                });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/run-custom") {
+            try {
+                const body = await parseJsonBody(req);
+                const tokens = toTokens(body.subcommand);
+                if (!tokens.length) {
+                    json(res, 400, { error: "subcommand is required." });
+                    return;
+                }
+                const started = await startCommand(instance, tokens, { kind: "custom" });
+                json(res, 200, started);
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/set-cli") {
+            try {
+                const body = await parseJsonBody(req);
+                const tokens = toTokens(body.command);
+                if (!tokens.length) {
+                    json(res, 400, { error: "command is required." });
+                    return;
+                }
+                if (instance.running) {
+                    json(res, 400, { error: "Cannot change CLI command while a command is running." });
+                    return;
+                }
+                if (instance.submoduleInitPromise || instance.nodeDepsPromise) {
+                    json(res, 400, { error: "Cannot change CLI command while setup checks are running." });
+                    return;
+                }
+                instance.cliTokens = tokens;
+                instance.submodulesReady = false;
+                instance.nodeDepsReady = false;
+                instance.submoduleInitPromise = null;
+                instance.nodeDepsPromise = null;
+                emitState(instance);
+                json(res, 200, { cliCommand: instance.cliTokens.join(" ") });
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
+        if (req.method === "POST" && pathname === "/api/set-timeouts") {
+            try {
+                const body = await parseJsonBody(req);
+                const next = { ...instance.timeouts };
+                if (body.list != null) {
+                    next.list = normalizeTimeoutSeconds(body.list);
+                }
+                if (body.version != null) {
+                    next.version = normalizeTimeoutSeconds(body.version);
+                }
+                instance.timeouts = next;
+                emitState(instance);
+                json(res, 200, { timeouts: instance.timeouts });
             } catch (error) {
                 json(res, 400, { error: error.message });
             }
@@ -805,7 +1026,7 @@ export function createEditorCanvas() {
         id: "tessel-script-editor",
         displayName: "Tessel script editor",
         description:
-            "Author Tessel scripts with syntax highlighting, create new files, then run or push them to the device with streaming output.",
+            "Author Tessel scripts with syntax highlighting and run or push them to the device with streaming output, plus device diagnostics: list Tessels, read version, provision, and run arbitrary t2 commands.",
         actions: [
             {
                 name: "get_state",
@@ -939,10 +1160,100 @@ export function createEditorCanvas() {
                 description: "Run `t2 list --usb` and refresh available Tessel devices.",
                 handler: async (ctx) => {
                     const instance = requireInstance(ctx);
-                    return await startCommand(instance, listCommandArgs(), {
+                    return await startCommand(instance, listCommandArgs(instance), {
                         kind: "list-devices",
-                        timeoutSeconds: LIST_DISCOVERY_TIMEOUT_SECONDS,
+                        timeoutSeconds: listTimeoutSeconds(instance),
                     });
+                },
+            },
+            {
+                name: "get_version",
+                description: "Run the version command against the selected Tessel (or USB default), streaming output.",
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return await startCommand(instance, versionCommandArgs(instance), {
+                        kind: "get-version",
+                        timeoutSeconds: versionTimeoutSeconds(instance),
+                    });
+                },
+            },
+            {
+                name: "run_command",
+                description: "Run any t2 subcommand text for diagnostics, e.g. `list --lan` or `wifi`.",
+                inputSchema: {
+                    type: "object",
+                    properties: { subcommand: { type: "string" } },
+                    required: ["subcommand"],
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    const tokens = toTokens(ctx.input.subcommand);
+                    if (!tokens.length) {
+                        throw new CanvasError("invalid_input", "subcommand cannot be empty.");
+                    }
+                    return await startCommand(instance, tokens, { kind: "custom" });
+                },
+            },
+            {
+                name: "set_cli_command",
+                description: "Set the base CLI command, e.g. `t2` or `node repos/t2-cli/bin/tessel-2.js`.",
+                inputSchema: {
+                    type: "object",
+                    properties: { command: { type: "string" } },
+                    required: ["command"],
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    if (instance.running) {
+                        throw new CanvasError(
+                            "command_running",
+                            "Cannot change CLI command while a command is running.",
+                        );
+                    }
+                    if (instance.submoduleInitPromise || instance.nodeDepsPromise) {
+                        throw new CanvasError(
+                            "setup_in_progress",
+                            "Cannot change CLI command while setup checks are running.",
+                        );
+                    }
+                    const tokens = toTokens(ctx.input.command);
+                    if (!tokens.length) {
+                        throw new CanvasError("invalid_input", "command cannot be empty.");
+                    }
+                    instance.cliTokens = tokens;
+                    instance.submodulesReady = false;
+                    instance.nodeDepsReady = false;
+                    instance.submoduleInitPromise = null;
+                    instance.nodeDepsPromise = null;
+                    emitState(instance);
+                    return { cliCommand: instance.cliTokens.join(" ") };
+                },
+            },
+            {
+                name: "set_timeouts",
+                description: "Configure discovery timeouts (seconds) for the list and version scans.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        list: { type: "number" },
+                        version: { type: "number" },
+                    },
+                    additionalProperties: false,
+                },
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    const next = { ...instance.timeouts };
+                    if (ctx.input.list != null) {
+                        next.list = normalizeTimeoutSeconds(ctx.input.list);
+                    }
+                    if (ctx.input.version != null) {
+                        next.version = normalizeTimeoutSeconds(ctx.input.version);
+                    }
+                    instance.timeouts = next;
+                    emitState(instance);
+                    return { timeouts: instance.timeouts };
                 },
             },
             {

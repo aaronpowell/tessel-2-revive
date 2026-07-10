@@ -286,6 +286,8 @@ export function snapshot(instance) {
         cliCommand: instance.cliTokens.join(" "),
         selectedDeviceId: instance.selectedDeviceId,
         devices: instance.devices,
+        // Configurable discovery timeouts (seconds) for list/version scans.
+        timeouts: instance.timeouts,
         // Optional editor-only fields; omitted from JSON for terminal instances.
         files: instance.files,
         currentFile: instance.currentFile,
@@ -366,14 +368,33 @@ export function resolveT2Invocation(instance, args) {
     };
 }
 
-export function listCommandArgs() {
-    return ["list", "--usb", "--timeout", String(LIST_DISCOVERY_TIMEOUT_SECONDS)];
+export function listTimeoutSeconds(instance) {
+    const value = instance?.timeouts?.list;
+    return typeof value === "number" && value > 0 ? value : LIST_DISCOVERY_TIMEOUT_SECONDS;
+}
+
+export function versionTimeoutSeconds(instance) {
+    const value = instance?.timeouts?.version;
+    return typeof value === "number" && value > 0 ? value : VERSION_DISCOVERY_TIMEOUT_SECONDS;
+}
+
+export function normalizeTimeoutSeconds(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) {
+        throw new Error("Timeout must be a positive number of seconds.");
+    }
+    // Guard against runaway values that would keep a discovery scan alive forever.
+    return Math.min(Math.round(num * 10) / 10, 120);
+}
+
+export function listCommandArgs(instance) {
+    return ["list", "--usb", "--timeout", String(listTimeoutSeconds(instance))];
 }
 
 export function versionCommandArgs(instance) {
     const device = selectedDevice(instance);
     const baseArgs = device ? ["version", "--name", device.name] : ["version", "--usb"];
-    return [...baseArgs, "--timeout", String(VERSION_DISCOVERY_TIMEOUT_SECONDS)];
+    return [...baseArgs, "--timeout", String(versionTimeoutSeconds(instance))];
 }
 
 export function deviceTargetArgs(instance) {
