@@ -12,7 +12,24 @@ This repository is optimised for agent-assisted iteration. Read these files in o
 4. [`docs/gaps-and-risks.md`](docs/gaps-and-risks.md) — known incomplete work and technical risk areas
 5. [`docs/external-references.md`](docs/external-references.md) — upstream Tessel docs, datasheets, and community links
 
-The forked repos are included as git submodules under [`repos/`](repos/). A single `git clone --recursive` gives you the full working tree.
+The forked repos are included as git submodules under [`repos/`](repos/).
+
+### Cloning on Windows
+
+`repos/openwrt` and `repos/uboot-mt7620` are marked `update = none` — they are large, Linux-only build inputs and are skipped automatically by `git clone --recurse-submodules` on Windows. A standard clone gives you everything needed for CLI and firmware work:
+
+```powershell
+git clone --recurse-submodules https://github.com/aaronpowell/tessel-2-revive.git
+```
+
+To also initialise the Linux build repos (WSL/Linux only):
+```bash
+git submodule update --init repos/openwrt repos/uboot-mt7620
+```
+
+### Agent sessions and OpenWrt
+
+Agent sessions that need to modify OpenWrt package files should be started from **WSL**, where the repo already lives at `/home/aaron/code/github/tessel/openwrt`. The `t2-build` Docker Compose setup clones openwrt internally and does not require it on the Windows filesystem.
 
 ## Milestone definition (first revival target)
 

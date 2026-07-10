@@ -22,7 +22,9 @@
 	path = repos/openwrt
 	url = https://github.com/aaronpowell/openwrt.git
 	branch = 2018-07-13
+	update = none
 [submodule "repos/uboot-mt7620"]
 	path = repos/uboot-mt7620
 	url = https://github.com/aaronpowell/uboot-mt7620.git
 	branch = master
+	update = none
