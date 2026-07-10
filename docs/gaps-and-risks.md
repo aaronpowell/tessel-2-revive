@@ -4,19 +4,20 @@ Current status of known incomplete work, technical risks, and recommended next s
 
 ---
 
-## Hardware validation (blocker for everything below)
+## Hardware validation (latest session findings)
 
-**Status:** ⏳ Pending — no hardware attached during software revival work.
+**Status:** ✅ Validated on real hardware (Windows USB path).
 
-All software-side validation has passed (CLI tests, release dry-runs, artifact integrity). The remaining gap is:
+Validated outcomes from the latest recovery session:
 
-- Physical board provisioning over Windows USB
-- Firmware flash via `t2 update --firmware-path ... --openwrt-path ...`
-- Confirming `t2 version` shows expected versions
-- Running and verifying a hello-world script
-- Verifying LED toggle, module port GPIO
+- `t2 list --usb` can discover a connected board on Windows
+- `t2 provision` completes successfully after USB process lifecycle hardening
+- `t2 restore --usb` succeeds when `T2_RESTORE_URL` points to a valid factory tarball
+- Post-restore reboot reached steady blue POWER LED and board recovered to usable state
 
-**What to do:** Follow [`getting-started.md`](getting-started.md). Report any failures here as new issues.
+Observed nuance:
+
+- `t2 update` may still fail at firmware bootloader handoff (`No device found in bootloader mode`) even when OpenWrt transfer succeeds; this remains a known instability and should be treated separately from restore.
 
 ---
 
@@ -55,6 +56,9 @@ node .\bin\tessel-2.js update `
   --firmware-path <path>\firmware.bin `
   --openwrt-path  <path>\sysupgrade.bin
 ```
+
+For `t2 restore`, if the default `new_build_next.tar.gz` URL is unavailable, use the archived source:
+`https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
 
 ---
 
