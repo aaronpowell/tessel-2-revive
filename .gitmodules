@@ -1,0 +1,28 @@
+[submodule "repos/t2-cli"]
+	path = repos/t2-cli
+	url = https://github.com/aaronpowell/t2-cli.git
+	branch = master
+[submodule "repos/t2-firmware"]
+	path = repos/t2-firmware
+	url = https://github.com/aaronpowell/t2-firmware.git
+	branch = master
+[submodule "repos/t2-build"]
+	path = repos/t2-build
+	url = https://github.com/aaronpowell/t2-build.git
+	branch = master
+[submodule "repos/t2-release"]
+	path = repos/t2-release
+	url = https://github.com/aaronpowell/t2-release.git
+	branch = master
+[submodule "repos/openwrt-tessel"]
+	path = repos/openwrt-tessel
+	url = https://github.com/aaronpowell/openwrt-tessel.git
+	branch = master
+[submodule "repos/openwrt"]
+	path = repos/openwrt
+	url = https://github.com/aaronpowell/openwrt.git
+	branch = 2018-07-13
+[submodule "repos/uboot-mt7620"]
+	path = repos/uboot-mt7620
+	url = https://github.com/aaronpowell/uboot-mt7620.git
+	branch = master
