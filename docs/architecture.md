@@ -1,6 +1,8 @@
 # Tessel 2 Architecture
 
 > Upstream reference: [Technical Overview](https://tessel.gitbooks.io/t2-docs/content/Debugging/Technical_Overview.html) | [Tessel 2 Hardware Overview](https://tessel.gitbooks.io/t2-docs/content/Hardware/Tessel_2_Overview.html)
+>
+> For a narrative walkthrough of how all of this fits together (is OpenWrt a real Linux distro? does the board run a real Node.js binary? which npm packages can you push?), see [`how-it-works.md`](how-it-works.md).
 
 ## Hardware
 
@@ -97,8 +99,21 @@ t2-cli (Node.js)
 |---------|--------|------|
 | `spid` | `t2-firmware/soc/spid.c` | SPI daemon; bridges SPI↔domain sockets |
 | `usbexecd` | `t2-firmware/soc/usbexecd.c` | Accepts shell commands over USB, routes stdio |
-| `node` | OpenWrt package | Executes user scripts |
+| `node` | OpenWrt package (`openwrt-tessel/package/node`) | Real Node.js **v8.11.3** binary at `/usr/bin/node`; executes user scripts |
 | `tessel.js` | `t2-firmware/node/tessel.js` | Node module; connects to port domain sockets |
+
+### On-device Node.js runtime
+
+The device runs a genuine, unmodified-source **Node.js v8.11.3** cross-compiled for MIPS, packaged by [`openwrt-tessel/package/node/node/Makefile`](../repos/openwrt-tessel/package/node/node/Makefile). Key constraints baked into that build:
+
+| Build flag | Effect |
+|-----------|--------|
+| `--with-mips-float-abi=soft` | Soft-float MIPS32; this is why **8.11.3 is the last Node that cross-compiles** for the MT7620 |
+| `--v8-options="--max_old_space_size=20 ..."` | V8 heap capped at ~**20 MB** |
+| `--without-inspector` | No `--inspect` / DevTools debugging on-device |
+| `--without-intl` | No full ICU / `Intl` locale support |
+
+Because the runtime is EOL Node 8, on-device scripts must stay within the Node 8 / ES2017 surface. Pure-JS npm packages deploy fine; native (C/C++) addons only work if a precompiled MIPS binary is available. See [`how-it-works.md`](how-it-works.md) §3 and §5 for the full picture, and [`gaps-and-risks.md`](gaps-and-risks.md) "Node.js version on device".
 
 ### Key source files (compatibility boundary)
 

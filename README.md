@@ -7,10 +7,11 @@ A personal-use revival of the [Tessel 2](https://tessel.io) development board ec
 This repository is optimised for agent-assisted iteration. Read these files in order:
 
 1. [`docs/architecture.md`](docs/architecture.md) — hardware and software stack overview
-2. [`docs/repos.md`](docs/repos.md) — every forked repo, what changed, and where it lives
-3. [`docs/getting-started.md`](docs/getting-started.md) — how to flash a board and run an app today
-4. [`docs/gaps-and-risks.md`](docs/gaps-and-risks.md) — known incomplete work and technical risk areas
-5. [`docs/external-references.md`](docs/external-references.md) — upstream Tessel docs, datasheets, and community links
+2. [`docs/how-it-works.md`](docs/how-it-works.md) — deep-dive explainer: how OpenWrt, on-device Node.js, and code deploy actually work
+3. [`docs/repos.md`](docs/repos.md) — every forked repo, what changed, and where it lives
+4. [`docs/getting-started.md`](docs/getting-started.md) — how to flash a board and run an app today
+5. [`docs/gaps-and-risks.md`](docs/gaps-and-risks.md) — known incomplete work and technical risk areas
+6. [`docs/external-references.md`](docs/external-references.md) — upstream Tessel docs, datasheets, and community links
 
 The forked repos are included as git submodules under [`repos/`](repos/).
 
@@ -54,6 +55,7 @@ tessel-2-revive/
 ├── README.md                  ← you are here
 ├── docs/
 │   ├── architecture.md        ← T2 hardware/software stack
+│   ├── how-it-works.md        ← deep-dive: OpenWrt, Node.js, deploy flow
 │   ├── repos.md               ← forked repo inventory
 │   ├── getting-started.md     ← flash + hello world walkthrough
 │   ├── gaps-and-risks.md      ← known gaps, risks, next steps
