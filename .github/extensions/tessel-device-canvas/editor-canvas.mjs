@@ -2,7 +2,8 @@
 //
 // A combined authoring + diagnostics surface: a CodeMirror-backed editor for
 // authoring Tessel scripts that live on disk under `tessel-scripts/` in the repo.
-// It can create new files (auto-injecting `require('tessel')`), open/save existing
+// It can create new files (JavaScript or Python, seeded with language-appropriate
+// starter content), open/save existing
 // ones, run them on the device (`t2 run <file>`) or deploy them to run on boot
 // (`t2 push <file>`), and streams the device output into a console. It also folds
 // in the device-terminal diagnostics: list Tessels, read version, provision,
@@ -41,7 +42,44 @@ import {
 const instances = new Map();
 
 const SCRIPTS_DIRNAME = "tessel-scripts";
-const NEW_FILE_BOILERPLATE = "const tessel = require('tessel');\n\n";
+
+// Supported languages, keyed by file extension. t2 auto-detects the deploy path
+// from the entry file's extension (repos/t2-cli/lib/tessel/deployment/index.js:
+// .js -> node, .py -> python), so run/push need no language flag. The editor
+// just has to author files with the right extension, syntax mode, and starter
+// content, and let the existing run/push flow carry them through.
+const LANGUAGES = {
+    js: {
+        id: "js",
+        label: "JavaScript",
+        mode: "javascript",
+        boilerplate: "const tessel = require('tessel');\n\n",
+    },
+    py: {
+        id: "py",
+        label: "Python",
+        mode: "python",
+        // Tessel's Python deploy runs `python <entry>` on the device. There is no
+        // guaranteed hardware library equivalent to the JS `tessel` module, so keep
+        // the starter minimal rather than importing something that may not resolve.
+        boilerplate: "# Tessel 2 Python script\nprint('Hello from Tessel')\n",
+    },
+};
+const DEFAULT_LANGUAGE = "js";
+const SUPPORTED_EXTENSIONS = Object.keys(LANGUAGES);
+
+function extensionOf(name) {
+    const match = /\.([A-Za-z0-9]+)$/.exec(String(name || ""));
+    return match ? match[1].toLowerCase() : "";
+}
+
+function languageForName(name) {
+    return LANGUAGES[extensionOf(name)] || LANGUAGES[DEFAULT_LANGUAGE];
+}
+
+function boilerplateForName(name) {
+    return languageForName(name).boilerplate;
+}
 
 // t2 run/push refuse to deploy a project that has no `.npmrc` (normally written
 // by `t2 init`). Since our scripts live in tessel-scripts/ and no package.json
@@ -79,8 +117,8 @@ function sanitizeScriptName(raw) {
     if (!/^[A-Za-z0-9._ -]+$/.test(name)) {
         throw new Error("File name may only contain letters, numbers, spaces, '.', '_' and '-'.");
     }
-    if (!/\.js$/i.test(name)) {
-        name += ".js";
+    if (!SUPPORTED_EXTENSIONS.includes(extensionOf(name))) {
+        name += `.${DEFAULT_LANGUAGE}`;
     }
     return name;
 }
@@ -174,7 +212,7 @@ async function refreshFiles(instance) {
     await ensureScriptsDir(instance);
     const entries = await fs.readdir(instance.scriptsDir, { withFileTypes: true });
     instance.files = entries
-        .filter((entry) => entry.isFile() && /\.js$/i.test(entry.name))
+        .filter((entry) => entry.isFile() && SUPPORTED_EXTENSIONS.includes(extensionOf(entry.name)))
         .map((entry) => entry.name)
         .sort((a, b) => a.localeCompare(b));
 }
@@ -480,6 +518,7 @@ function renderHtml(instanceId) {
     </div>
     <script src="${cdn}/codemirror.min.js"></script>
     <script src="${cdn}/mode/javascript/javascript.min.js"></script>
+    <script src="${cdn}/mode/python/python.min.js"></script>
     <script src="${cdn}/addon/edit/closebrackets.min.js"></script>
     <script src="${cdn}/addon/edit/matchbrackets.min.js"></script>
     <script>
@@ -584,9 +623,16 @@ function renderHtml(instanceId) {
       function getCode() {
         return cm ? cm.getValue() : textarea.value;
       }
-      function setCode(value) {
+      var CM_MODES = { js: "javascript", py: "python" };
+      function modeForName(name) {
+        var m = /\.([A-Za-z0-9]+)$/.exec(name || "");
+        var ext = m ? m[1].toLowerCase() : "";
+        return CM_MODES[ext] || "javascript";
+      }
+      function setCode(value, name) {
         suppressChange = true;
         if (cm) {
+          if (name != null) { cm.setOption("mode", modeForName(name)); }
           cm.setValue(value);
         } else {
           textarea.value = value;
@@ -717,18 +763,18 @@ function renderHtml(instanceId) {
         }
         const res = await post("/api/file/open", { name: name });
         currentFile = res.name;
-        setCode(res.content);
+        setCode(res.content, res.name);
         hideOutput = false;
         renderFiles();
       }
 
       async function newFile() {
-        const name = window.prompt("New script file name", "app.js");
+        const name = window.prompt("New file name (use .js or .py to pick the language)", "app.js");
         if (!name) return;
         try {
           const res = await post("/api/file/new", { name: name });
           currentFile = res.name;
-          setCode(res.content);
+          setCode(res.content, res.name);
           hideOutput = false;
           renderFiles();
           updateStatus("Created " + res.name);
@@ -1107,11 +1153,12 @@ async function createInstance(instanceId, workspacePath) {
                     return;
                 }
                 await fs.mkdir(instance.scriptsDir, { recursive: true });
-                await fs.writeFile(full, NEW_FILE_BOILERPLATE, "utf8");
+                const boilerplate = boilerplateForName(name);
+                await fs.writeFile(full, boilerplate, "utf8");
                 await refreshFiles(instance);
                 instance.currentFile = name;
                 emitState(instance);
-                json(res, 200, { name, content: NEW_FILE_BOILERPLATE });
+                json(res, 200, { name, content: boilerplate });
             } catch (error) {
                 json(res, 400, { error: error.message });
             }
@@ -1427,7 +1474,7 @@ export function createEditorCanvas() {
             },
             {
                 name: "new_file",
-                description: "Create a new script file preloaded with `require('tessel')`.",
+                description: "Create a new script file with language-appropriate starter content. Use a .js or .py extension to pick the language (defaults to JavaScript).",
                 inputSchema: {
                     type: "object",
                     properties: { name: { type: "string" } },
@@ -1442,11 +1489,12 @@ export function createEditorCanvas() {
                         throw new CanvasError("file_exists", `File already exists: ${name}`);
                     }
                     await fs.mkdir(instance.scriptsDir, { recursive: true });
-                    await fs.writeFile(full, NEW_FILE_BOILERPLATE, "utf8");
+                    const boilerplate = boilerplateForName(name);
+                    await fs.writeFile(full, boilerplate, "utf8");
                     await refreshFiles(instance);
                     instance.currentFile = name;
                     emitState(instance);
-                    return { name, content: NEW_FILE_BOILERPLATE };
+                    return { name, content: boilerplate };
                 },
             },
             {
