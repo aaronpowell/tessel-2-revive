@@ -13,6 +13,26 @@ WORK=/work
 SRC="$WORK/openwrt-$OPENWRT_TAG"
 OVERLAY=/overlay
 
+# Archived infra (git.lede-project.org, old downloads mirrors) often has expired
+# certs. This is a throwaway container fetching archived open-source; tolerate it.
+export GIT_SSL_NO_VERIFY=1
+git config --global http.sslVerify false || true
+echo "check_certificate = off" > /root/.wgetrc
+
+# Map an OpenWrt release tag to the matching GitHub feed mirror branch.
+feed_branch() {
+  case "$OPENWRT_TAG" in
+    v17.01.*) echo "lede-17.01" ;;
+    v18.06.*) echo "openwrt-18.06" ;;
+    v19.07.*) echo "openwrt-19.07" ;;
+    v21.02.*) echo "openwrt-21.02" ;;
+    v22.03.*) echo "openwrt-22.03" ;;
+    v23.05.*) echo "openwrt-23.05" ;;
+    v24.10.*) echo "openwrt-24.10" ;;
+    *)        echo "master" ;;
+  esac
+}
+
 clone_sources() {
   if [[ ! -d "$SRC/.git" ]]; then
     echo "==> Cloning upstream OpenWrt $OPENWRT_TAG ..."
@@ -46,11 +66,27 @@ EOF
     echo "    added Device/tessel to mt7620.mk"
   fi
 
-  # Feeds + minimal config seed.
+  # The 2017-era default download mirrors are dead. Prefer the live OpenWrt sources
+  # archive (flat, by filename) for every source tarball (gcc, musl, ...).
+  cat > "$SRC/scripts/localmirrors" <<'EOF'
+https://sources.openwrt.org
+https://sources.cdn.openwrt.org
+https://mirror2.openwrt.org/sources
+EOF
+
+  # Feeds: rewrite to reliable GitHub mirrors (default infra is often dead), and
+  # treat failures as non-fatal — the minimal bridge image is core-tree only.
   cd "$SRC"
-  [[ -f feeds.conf.default ]] && cp feeds.conf.default feeds.conf || true
-  ./scripts/feeds update -a
-  ./scripts/feeds install -a
+  local fb; fb="$(feed_branch)"
+  cat > feeds.conf <<EOF
+src-git packages https://github.com/openwrt/packages.git;$fb
+src-git luci https://github.com/openwrt/luci.git;$fb
+src-git routing https://github.com/openwrt/routing.git;$fb
+src-git telephony https://github.com/openwrt/telephony.git;$fb
+EOF
+  echo "==> Updating feeds (branch $fb; non-fatal) ..."
+  ./scripts/feeds update -a || echo "    (feeds update partial/failed — continuing, minimal image is core-only)"
+  ./scripts/feeds install -a || true
 
   cp "$OVERLAY/config.seed" "$SRC/.config"
   make defconfig
@@ -61,6 +97,9 @@ EOF
 build_world() {
   echo "==> Building host tools + world (jobs=$BUILD_JOBS) ..."
   cd "$SRC"
+  export DOWNLOAD_MIRROR="https://sources.openwrt.org;https://sources.cdn.openwrt.org"
+  # Container runs as root; several host tools (tar, etc.) refuse to configure as root.
+  export FORCE_UNSAFE_CONFIGURE=1
   # Fetch first so download failures surface clearly.
   make -j"$BUILD_JOBS" download V=s || true
   make -j"$BUILD_JOBS" || make -j1 V=s
