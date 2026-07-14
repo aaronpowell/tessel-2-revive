@@ -2,6 +2,11 @@
 # `make defconfig` expands this to a full config.
 CONFIG_TARGET_ramips=y
 CONFIG_TARGET_ramips_mt7620=y
+# Device profile symbol differs by release:
+#   17.01/18.06:  CONFIG_TARGET_ramips_mt7620_DEVICE_tessel
+#   19.07+:       CONFIG_TARGET_DEVICE_ramips_mt7620_DEVICE_tessel
+# List both; make defconfig silently drops whichever does not apply.
+CONFIG_TARGET_ramips_mt7620_DEVICE_tessel=y
 CONFIG_TARGET_DEVICE_ramips_mt7620_DEVICE_tessel=y
 
 # Coprocessor bridge + spidev.

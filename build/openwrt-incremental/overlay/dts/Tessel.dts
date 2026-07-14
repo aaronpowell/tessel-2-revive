@@ -116,7 +116,13 @@
 			ralink,group = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
 			ralink,function = "gpio";
 		};
-		spi_cs1: spi {
+		/*
+		 * Mux SPI chip-select 1 (the SAMD21 coprocessor) into the default
+		 * pin state. The mt7620 SoC .dtsi already defines a pin group
+		 * labelled `spi_cs1` (at /pinctrl/spi1), so this node must NOT
+		 * re-use that label — dtc rejects duplicate labels.
+		 */
+		spi {
 			spi {
 				ralink,group = "spi cs1";
 				ralink,function = "spi cs1";

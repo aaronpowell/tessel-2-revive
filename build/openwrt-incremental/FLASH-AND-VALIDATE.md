@@ -20,7 +20,7 @@ node .\repos\t2-cli\bin\tessel-2.js list --usb
 
 ## 1. Flash the 17.01 image (OS only)
 ```powershell
-$img = "build\openwrt-incremental\output\openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin"
+$img = "build\openwrt-incremental\output\lede-ramips-mt7620-tessel-squashfs-sysupgrade.bin"
 node .\repos\t2-cli\bin\tessel-2.js update --usb --openwrt-path $img
 ```
 Expect `Finished updating Tessel with local builds.`, then the board reboots and

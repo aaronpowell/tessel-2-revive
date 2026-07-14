@@ -199,3 +199,47 @@ needed after heavy flash/restore cycles.
 4. **22.03 → 24.10** — mechanical bring-up plus the swconfig→DSA and
    iptables→nftables config migrations; 24.10 becomes the validation that the 21.02
    port holds on kernel 6.6.
+
+## 8. Hop 1 (17.01) build result — actually built this session
+
+The clean-upstream + thin-overlay method was validated end to end: a complete
+**OpenWrt/LEDE 17.01.7 Tessel 2 sysupgrade image builds successfully** in the Docker
+harness under `build/openwrt-incremental/`. Artifact:
+`output/lede-ramips-mt7620-tessel-squashfs-sysupgrade.bin` (~3.3 MB), with the
+`tessel-tools` bridge (`spid` + `usbexecd`) compiled in. Flash/boot validation is
+human-supervised — see `build/openwrt-incremental/FLASH-AND-VALIDATE.md`.
+
+Getting there surfaced exactly the small, individually-diagnosable deltas the
+incremental approach is designed to expose. Five were hit and fixed, in build order:
+
+1. **Dead 2017 infra (feeds).** 17.01's `feeds.conf.default` points at
+   `git.lede-project.org` (expired TLS). Fix: generate a `feeds.conf` against the
+   GitHub mirrors (`openwrt/{packages,luci,routing,telephony}`, branch `lede-17.01`)
+   and treat feed failures as non-fatal (the minimal bridge image is core-tree only).
+2. **Dead 2017 infra (source tarballs).** `gcc-5.4.0` et al. 404 from the original
+   mirrors. Fix: a `scripts/localmirrors` pointing at the live `sources.openwrt.org`
+   archive, plus `DOWNLOAD_MIRROR`.
+3. **Host tools refuse to build as root.** `tar-1.29`'s configure aborts under the
+   root container user. Fix: `FORCE_UNSAFE_CONFIGURE=1`.
+4. **Device-profile config symbol renamed across releases.** 17.01 selects the board
+   with `CONFIG_TARGET_ramips_mt7620_DEVICE_tessel`; the `CONFIG_TARGET_DEVICE_…`
+   infix form is a 19.07+ convention. The seed now lists both (defconfig drops the
+   inapplicable one). *Track this rename at the 18.06→19.07 hop.*
+5. **`usbexecd.c` vs musl `<stdio.h>` — a genuine source-portability bug.** The daemon
+   names struct members and function parameters `stdin`/`stdout`/`stderr`, which are
+   object-like macros in musl (`#define stdin (stdin)`), so `p->stdin` preprocesses to
+   `p->(stdin)`. Fixed non-invasively with a force-included
+   `musl-stdio-fixup.h` (`#include <stdio.h>` then `#undef` the three) — no upstream
+   source edit. This is toolchain-driven (musl), **not** a kernel-interface break, so
+   it does not move the 21.02 bridge-porting pivot; but it is a required C fix, so the
+   §7 note that 17.01 needs "zero C changes" is corrected to "one trivial,
+   mechanical C shim (no logic change)".
+6. **DTS duplicate label.** Our `Tessel.dts` labelled a pinctrl group `spi_cs1`, which
+   collides with the same label already defined in the mt7620 SoC `.dtsi`
+   (`/pinctrl/spi1`). Fix: drop the redundant label, keep the SPI-CS1 pin-mux node.
+
+**Net:** the 17.01 base (toolchain, kernel 4.4.182, all core packages) and the Tessel
+bridge daemons compile cleanly. Remaining gate is on-hardware: flash → confirm
+`/dev/spidev*` + `/var/run/tessel/*` sockets → `t2-cli` connects. Per the §1.1
+analysis, the only *runtime* delta expected at 17.01 is the SPI bus renumber
+(`32766`→`0`), already handled by the autodetecting `spid-start`.

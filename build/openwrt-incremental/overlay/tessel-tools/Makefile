@@ -25,8 +25,11 @@ define Package/tessel-tools/description
 endef
 
 # Drop -Werror so old-source warnings on newer toolchains don't fail the build.
+# Force-include musl-stdio-fixup.h to undo musl's stdin/stdout/stderr macros,
+# which collide with struct members / params of the same name in usbexecd.c.
 define Build/Compile
-	$(call Build/Compile/Default,-C soc CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -std=c99 -Wall")
+	$(CP) ./files/musl-stdio-fixup.h $(PKG_BUILD_DIR)/soc/musl-stdio-fixup.h
+	$(call Build/Compile/Default,-C soc CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -std=c99 -Wall -include musl-stdio-fixup.h")
 endef
 
 define Package/tessel-tools/install
