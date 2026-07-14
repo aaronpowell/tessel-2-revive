@@ -19,6 +19,29 @@ Observed nuance:
 
 - `t2 update` may still fail at firmware bootloader handoff (`No device found in bootloader mode`) even when OpenWrt transfer succeeds; this remains a known instability and should be treated separately from restore.
 
+### OpenWrt 24.10 image — flashed, but device does not come back up
+
+**Status:** ⛔ Core blocker for the uplift (see *OpenWrt upstream uplift* below).
+
+In the latest session the freshly built **OpenWrt 24.10 (kernel 6.6.144)** sysupgrade image was
+applied to real hardware with `t2 update --usb --openwrt-path <sysupgrade.bin>` (firmware
+correctly skipped). The transfer + flash completed (`Finished updating Tessel with local
+builds.`) and the board re-enumerated on USB — but **`t2-cli` can never connect** to the
+updated image (`version --usb` sits at `Looking for your Tessel...` indefinitely), whereas the
+factory image connects in seconds and `t2 restore` reconnects instantly.
+
+**Root cause (diagnosed):** the on-device `spid`/`usbexecd` bridge that `t2-cli` talks to over
+USB cannot start on kernel 6.6. `tessel-tools` builds, installs, and is enabled on boot
+(`S60spid`/`S60usbexecd`), but `spid-start` runs `exec spid /dev/spidev32766.1 2 1 …` and the
+2016-era `spid` drives GPIO via the legacy `/sys/class/gpio` sysfs interface. On 6.6 the spidev
+node name/numbering is DTS-dependent (that node likely doesn't exist) and sysfs GPIO is
+deprecated/removed — so the coprocessor bridge never comes up.
+
+**Recovery:** every affected device was restored to the known-good factory image via the
+local-tarball path (`python -m http.server 8765` + `T2_RESTORE_URL`), which is reliable. A
+physical USB replug is sometimes needed to re-establish the data interface after heavy
+restore/flash cycles.
+
 ---
 
 ## USB attachment on WSL2
@@ -64,21 +87,49 @@ For `t2 restore`, if the default `new_build_next.tar.gz` URL is unavailable, use
 
 ## OpenWrt upstream uplift
 
-**Status:** 📋 Planned — not started.
+**Status:** 🔬 Attempted — build & flash succeed; **on-device bring-up blocked** by the `spid` bridge.
 
-The current image is built from a heavily aged OpenWrt snapshot (Barrier Breaker era, ~2014 base). Feasibility assessment recommends targeting **OpenWrt 24.10.x** for the MT7620.
+The current image is built from **OpenWrt Chaos Calmer 15.05-rc2** (2015, kernel 3.18), per the
+package feed pinned in `openwrt-tessel/config.mk:77`. This session targeted, built, and flashed
+**OpenWrt 24.10.x (kernel 6.6.144)** for the MT7620.
 
-**Key finding:** Modern on-device Node.js is **not realistic** for the MT7620 (MIPS32 soft-float). The practical architecture is:
-- Keep `spid` and `usbexecd` on-device (they're C daemons, not Node)
-- Use Node.js 8.11.3 (the last version that built for MIPS32 soft-float) for user scripts
+**What now works end-to-end:**
+- The 24.10 tree builds a valid Tessel sysupgrade artifact
+  (`bin/targets/ramips/mt7620/openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin`), after
+  fixing several staging/toolchain build blockers (target sysroot visibility in `rules.mk`,
+  `opkg`, and a `urngd` CMake CRT-probe workaround).
+- `t2 update --openwrt-path` transfers, flashes, and reboots the device cleanly.
+- The board boots the new image and re-enumerates on USB.
+
+**What blocks it (the hard part):** `t2-cli` cannot reach the updated image because the
+`spid`/`usbexecd` coprocessor bridge does not start on kernel 6.6 — see *Hardware validation →
+OpenWrt 24.10 image* above. Fixing this requires porting the Tessel bridge to modern kernel
+interfaces:
+- add a **DTS spidev binding** so the SPI node exists (replacing the hard-coded
+  `/dev/spidev32766.1`), and
+- port `spid`'s GPIO handling from legacy `/sys/class/gpio` to **libgpiod / the gpio
+  character device** (or re-enable `CONFIG_GPIO_SYSFS` and fix numbering as a stopgap).
+
+This is best debugged with an **MT7620 UART serial console**, which we do not yet have wired up.
+
+**Key finding (unchanged):** modern on-device Node.js is **not realistic** for the MT7620
+(MIPS32 soft-float). The uplift does **not** change this — Node stays at **8.11.3** regardless
+of OpenWrt version. The practical architecture is:
+- Keep `spid` and `usbexecd` on-device (C daemons, not Node) — but re-ported to modern SPI/GPIO
+- Use Node.js 8.11.3 for user scripts
 - Push more tooling host-side
 
-**Risks:**
-- MT7620 support in current OpenWrt upstream may need re-validation
-- Tessel board-specific packages, patches, and configs need porting to the newer OpenWrt build system
-- Node packaging strategy needs revisiting
+**Remaining risks:**
+- The `spid`/DTS re-port is genuine driver/bring-up engineering, not a config change
+- Firmware bootloader handoff during `t2 update` is still unreliable and must stay
+  human-supervised (see Hardware validation)
+- Tessel board-specific packages/patches/configs continue to need porting as upstream moves
 
-**Why it matters:** The current image has known-old SSH (weak key exchange algorithms, requires `-oKexAlgorithms=+diffie-hellman-group1-sha1` workaround), old OpenSSL, and no security updates since 2018.
+**Why it matters / risk of staying:** the current image has known-old SSH (weak KEX; requires
+`-oKexAlgorithms=+diffie-hellman-group1-sha1`), an EOL OpenSSL/TLS stack, a 2015 WiFi stack, and
+no security updates for ~10 years. A full risk breakdown for **not** upgrading (calibrated for an
+isolated, non-public, competently-managed network) plus the capability gaps is in
+[`security-threat-assessment.md`](./security-threat-assessment.md).
 
 ---
 
