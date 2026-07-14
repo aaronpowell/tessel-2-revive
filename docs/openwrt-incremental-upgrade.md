@@ -102,8 +102,8 @@ incrementally.
 |----:|---------|:------:|----------------------|:------:|--------|
 | 0 | 15.05 "Chaos Calmer" (baseline) | 3.18 | — all three legacy paths work | ✅ | — |
 | 1 | 17.01 "Reboot" | 4.4 | **SPI bus renumber** `32766 → 0` | ✅ *(1-line `spid.sh` fix)* | mechanical |
-| 2 | 18.06 | 4.9 | build-system / feed deltas only | ✅ | mechanical |
-| 3 | 19.07 | 4.14 | spidev **"buggy DT" warning** (node still created) | ✅ *(monitor)* | mechanical — **last easy hop** |
+| 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created) | ✅ | mechanical |
+| 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created) | ✅ *(monitor)* | mechanical — **last easy hop** |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ⚠️ | medium |
 | 6 | 23.05 | 5.15 | stricter spidev; libgpiod effectively mandatory; switch DSA; cmake/toolchain bumps (the `urngd` CRT workaround) | ⚠️ | medium |
@@ -117,7 +117,7 @@ incrementally.
 | Deviation | First bites at | Notes |
 |-----------|:--------------:|-------|
 | **SPI bus number** (`/dev/spidev32766.1`) | 17.01 (k4.4) | Modern Ralink SPI driver → bus `0`. Fix in `spid.sh`; verify actual node on boot (`ls /dev/spidev*`). Optionally pin via a DT `aliases { spi0 = &spi0; }`. |
-| **spidev DT compatible** | warns 19.07 (k4.14), hard 21.02 (k5.4) | Change DTS `compatible` to a whitelisted string (e.g. `rohm,dh2228fv`) or patch spidev's `of_device_id` table. |
+| **spidev DT compatible** | warns **18.06** (k4.14), hard 21.02 (k5.4) | `spidev_probe()` at k4.14 does `WARN(of_device_is_compatible(node,"spidev"), "buggy DT…")` — **warn-only, node still created** (verified in source, see §8). Both 18.06 and 19.07 are k4.14. Fix at the pivot: change DTS `compatible` to a whitelisted string (e.g. `rohm,dh2228fv`) or patch spidev's `of_device_id` table. |
 | **sysfs GPIO base / availability** | 21.02 (k5.4) → gone by 24.10 (k6.6) | gpiochip base dynamic → global `2`/`1` wrong; `CONFIG_GPIO_SYSFS` not default; interface removed later. Port `spid.c` to **libgpiod / `/dev/gpiochipN`**, addressing lines by `(chip, offset)`. |
 | **Device tree churn** | ongoing | mt7620 DTS moved to `dtsi` includes + `&label` overlays; re-express the Tessel board over each release's WRTnode/mt7620n base. |
 | **Switch: swconfig → DSA** | 22.03 / 23.05 | ramips DSA conversion is staged; affects `network` config + `board.d`. Off the USB/`spid` critical path but needed for LAN/SSH + hw smoke tests. |
@@ -243,3 +243,52 @@ bridge daemons compile cleanly. Remaining gate is on-hardware: flash → confirm
 `/dev/spidev*` + `/var/run/tessel/*` sockets → `t2-cli` connects. Per the §1.1
 analysis, the only *runtime* delta expected at 17.01 is the SPI bus renumber
 (`32766`→`0`), already handled by the autodetecting `spid-start`.
+
+## 9. Hops 2–3 (18.06 / 19.07) build results + spidev source corroboration
+
+Both built with the **same overlay and zero new fixes** — the 17.01 deltas (mirrors,
+`FORCE_UNSAFE_CONFIGURE`, dual device-symbol seed, `musl-stdio-fixup.h`, DTS label)
+were necessary and sufficient. This confirms the "everything ≤19.07 is mechanical"
+claim at build time.
+
+| Hop | Tag | Kernel (actual) | Artifact | tessel-tools |
+|----:|-----|:---------------:|----------|:------------:|
+| 2 | `v18.06.9` | **4.14.206** | `openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin` (3.6 MB) | ✅ `tessel-tools_0.1-1_mipsel_24kc.ipk` |
+| 3 | `v19.07.10` | **4.14.275** | `openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin` (3.8 MB) | ✅ `tessel-tools_0.1-1_mipsel_24kc.ipk` |
+
+**Roadmap correction:** 18.06 ramips runs **kernel 4.14.206**, not 4.9 — so 18.06 and
+19.07 share the *same* kernel. The spidev "buggy DT" warning therefore first appears at
+**18.06**, not 19.07 (tables in §3 / §3.1 updated).
+
+**spidev source evidence (corroborates the break-stage model without hardware).** In the
+k4.14 tree pulled by the 18.06 build,
+`build_dir/.../linux-4.14.206/drivers/spi/spidev.c` → `spidev_probe()`:
+
+```c
+/*
+ * spidev should never be referenced in DT without a specific
+ * compatible string, it is a Linux implementation thing …
+ */
+WARN(spi->dev.of_node &&
+     of_device_is_compatible(spi->dev.of_node, "spidev"),
+     "%pOF: buggy DT: spidev listed directly in DT\n", spi->dev.of_node);
+/* …falls through and still allocates minor + registers the char device… */
+```
+
+This is a **non-fatal `WARN()`**: the probe continues past it and still creates
+`/dev/spidevX.Y`. So on 18.06/19.07 the generic `compatible = "spidev"` node keeps
+working (dmesg will carry the warning — the cheap runtime tell to look for on hardware).
+The **hard** refusal (probe returns early unless the compatible is whitelisted) lands in
+the k5.x era → **21.02**, exactly the pivot. Net: source confirms warns-but-works ≤19.07,
+hard-break at the pivot — the break-stage model holds at build-source level.
+
+**19.07 verified identically (kernel 4.14.275).** The same `WARN(... "buggy DT: spidev
+listed directly in DT")` sits at `linux-4.14.275/drivers/spi/spidev.c:736`, and the
+probe still falls through to `device_create(..., "spidev%d.%d", spi->master->bus_num,
+spi->chip_select)` — node created, no early return, no whitelist gate. 19.07 built with
+**zero new fixes** (17.01 deltas necessary and sufficient across all three hops), so the
+"mechanical ≤19.07" model is now confirmed at build time for 17.01, 18.06, **and 19.07**.
+
+**Parked at 19.07 per parent instruction:** the 21.02 pivot (DTS whitelisted-compatible
+swap + `spid.c` libgpiod port) is **not** started; it waits until 17.01 is confirmed on
+real hardware (bridge up, `t2-cli` connects).
