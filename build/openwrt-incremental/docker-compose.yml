@@ -1,0 +1,37 @@
+# docker-compose.yml — clean-upstream incremental OpenWrt build for Tessel 2
+#
+#   docker compose run --rm build          # builds OPENWRT_TAG (default v17.01.7)
+#   OPENWRT_TAG=v19.07.10 docker compose run --rm build
+#   docker compose run --rm shell          # interactive shell in the build tree
+#
+# Source tree + build cache live in the named volume; artifacts land in ./output/.
+
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tessel-owrt-incremental
+    volumes:
+      - owrt-incremental-src:/work
+      - ./output:/artifacts
+    environment:
+      - OPENWRT_TAG=${OPENWRT_TAG:-v17.01.7}
+      - BUILD_JOBS=${BUILD_JOBS:-}
+
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tessel-owrt-incremental
+    volumes:
+      - owrt-incremental-src:/work
+      - ./output:/artifacts
+    environment:
+      - OPENWRT_TAG=${OPENWRT_TAG:-v17.01.7}
+    stdin_open: true
+    tty: true
+    command: ["shell"]
+
+volumes:
+  owrt-incremental-src:

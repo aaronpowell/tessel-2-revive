@@ -1,0 +1,8 @@
+# Scripts run inside the Linux build container — force LF regardless of host.
+*.sh   text eol=lf
+*.init text eol=lf
+build.sh text eol=lf
+spid-start text eol=lf
+usbexecd-start text eol=lf
+*.dts  text eol=lf
+config.seed text eol=lf

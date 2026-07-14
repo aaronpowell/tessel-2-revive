@@ -1,0 +1,16 @@
+# Minimal .config seed for the Tessel bridge-validation image.
+# `make defconfig` expands this to a full config.
+CONFIG_TARGET_ramips=y
+CONFIG_TARGET_ramips_mt7620=y
+CONFIG_TARGET_DEVICE_ramips_mt7620_DEVICE_tessel=y
+
+# Coprocessor bridge + spidev.
+CONFIG_PACKAGE_tessel-tools=y
+CONFIG_PACKAGE_kmod-spi-dev=y
+
+# USB host (module ports / peripherals).
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb-ohci=y
+
+# Keep the image lean for a fast validation hop.
+CONFIG_PACKAGE_wpad-mini=y

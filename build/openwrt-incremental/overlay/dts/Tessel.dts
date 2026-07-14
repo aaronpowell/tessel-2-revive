@@ -1,0 +1,126 @@
+/dts-v1/;
+
+#include "mt7620n.dtsi"
+
+/ {
+	compatible = "tessel,tessel2", "wrtnode", "ralink,mt7620n-soc";
+	model = "Tessel 2";
+
+	chosen {
+		bootargs = "console=ttyS0,115200";
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		wlan {
+			label = "tessel:amber:wlan";
+			gpios = <&gpio3 0 1>;
+		};
+		error {
+			label = "tessel:red:error";
+			gpios = <&gpio0 17 0>;
+		};
+		user1 {
+			label = "tessel:green:user1";
+			gpios = <&gpio0 0 0>;
+		};
+		user2 {
+			label = "tessel:blue:user2";
+			gpios = <&gpio1 14 0>;
+		};
+	};
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpio3 {
+	status = "okay";
+};
+
+&spi0 {
+	status = "okay";
+
+	m25p80@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <20000000>;
+
+		partition@0 {
+			label = "u-boot";
+			reg = <0x0 0x30000>;
+			read-only;
+		};
+
+		partition@30000 {
+			label = "u-boot-env";
+			reg = <0x30000 0x10000>;
+			read-only;
+		};
+
+		factory: partition@40000 {
+			label = "factory";
+			reg = <0x40000 0x10000>;
+			read-only;
+		};
+
+		partition@50000 {
+			label = "firmware";
+			reg = <0x50000 0x1fb0000>;
+		};
+	};
+
+	/*
+	 * Coprocessor bridge SPI slave on chip-select 1.
+	 * NOTE: `compatible = "spidev"` is what modern kernels reject; on 17.01
+	 * (k4.4) it still binds. From ~21.02 (k5.4) this must become a whitelisted
+	 * compatible (e.g. "rohm,dh2228fv"). Tracked in the uplift roadmap.
+	 */
+	spidev@1 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spidev";
+		reg = <1 0>;
+		spi-max-frequency = <10000000>;
+	};
+};
+
+&ehci {
+	status = "okay";
+};
+
+&ohci {
+	status = "okay";
+};
+
+&ethernet {
+	mtd-mac-address = <&factory 0x4>;
+	mediatek,portmap = "wllll";
+};
+
+&wmac {
+	ralink,mtd-eeprom = <&factory 0>;
+};
+
+&pinctrl {
+	state_default: pinctrl0 {
+		default {
+			ralink,group = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			ralink,function = "gpio";
+		};
+		spi_cs1: spi {
+			spi {
+				ralink,group = "spi cs1";
+				ralink,function = "spi cs1";
+			};
+		};
+	};
+};
