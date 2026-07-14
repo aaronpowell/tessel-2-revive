@@ -1,5 +1,11 @@
 # Hop 1 (OpenWrt 17.01) — flash & validate
 
+> **⚠️ Update (hardware verdict):** the plain 17.01 image **flashed but boots to a black
+> box** (POWER blinks forever, USB enumerates, t2-cli never connects — same as 24.10).
+> For the current diagnostic pass use **`DIAGNOSE-17.01-WIFI-AP.md`** (flash the `-DIAG`
+> image with `-n`, join the `Tessel-Diag` AP, pull `logread`/`dmesg`). The steps below
+> remain the validation path for once the board boots to a connectable state.
+
 > **Flashing is human-supervised** (the board is at your desk). This is **OS-only**
 > (`--openwrt-path`), so the SAMD21 firmware/bootloader handoff is skipped — that path
 > is unreliable and out of scope. Any bad flash is fully recoverable (see §4).

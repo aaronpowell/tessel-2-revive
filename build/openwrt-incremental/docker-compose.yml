@@ -18,6 +18,7 @@ services:
     environment:
       - OPENWRT_TAG=${OPENWRT_TAG:-v17.01.7}
       - BUILD_JOBS=${BUILD_JOBS:-}
+      - TESSEL_DIAG=${TESSEL_DIAG:-0}
 
   shell:
     build:

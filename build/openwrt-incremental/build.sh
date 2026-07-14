@@ -88,6 +88,17 @@ EOF
   ./scripts/feeds update -a || echo "    (feeds update partial/failed — continuing, minimal image is core-only)"
   ./scripts/feeds install -a || true
 
+  # Optional diagnostic rootfs files (baked into the image via OpenWrt's files/
+  # mechanism). Gated behind TESSEL_DIAG so the normal validation image stays
+  # clean. Always start from a clean files/ so rebuilds are deterministic.
+  rm -rf "$SRC/files"
+  if [[ "${TESSEL_DIAG:-0}" == "1" && -d "$OVERLAY/files" ]]; then
+    echo "==> TESSEL_DIAG=1: baking diagnostic files/ overlay (Wi-Fi AP) ..."
+    mkdir -p "$SRC/files"
+    cp -a "$OVERLAY/files/." "$SRC/files/"
+    chmod 0755 "$SRC/files/etc/uci-defaults/"* 2>/dev/null || true
+  fi
+
   cp "$OVERLAY/config.seed" "$SRC/.config"
   make defconfig
   echo "==> Effective device selection:"
@@ -108,8 +119,15 @@ build_world() {
 copy_artifacts() {
   echo "==> Copying artifacts ..."
   mkdir -p /artifacts
-  find "$SRC/bin" -name "*tessel*sysupgrade.bin" -exec cp {} /artifacts/ \; 2>/dev/null || true
-  find "$SRC/bin" -name "*tessel*" -name "*.bin" -exec cp {} /artifacts/ \; 2>/dev/null || true
+  local suffix=""
+  [[ "${TESSEL_DIAG:-0}" == "1" ]] && suffix="-DIAG"
+  find "$SRC/bin" -name "*tessel*sysupgrade.bin" | while read -r f; do
+    local base; base="$(basename "$f" .bin)"
+    cp "$f" "/artifacts/${base}${suffix}.bin"
+  done
+  # Also copy any other tessel .bin (e.g. initramfs) unmodified for completeness.
+  find "$SRC/bin" -name "*tessel*" -name "*.bin" ! -name "*sysupgrade.bin" \
+    -exec cp {} /artifacts/ \; 2>/dev/null || true
   echo "==> /artifacts:"; ls -lh /artifacts/ || true
 }
 

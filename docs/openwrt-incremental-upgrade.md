@@ -292,3 +292,68 @@ spi->chip_select)` — node created, no early return, no whitelist gate. 19.07 b
 **Parked at 19.07 per parent instruction:** the 21.02 pivot (DTS whitelisted-compatible
 swap + `spid.c` libgpiod port) is **not** started; it waits until 17.01 is confirmed on
 real hardware (bridge up, `t2-cli` connects).
+
+## 10. Hop 1 (17.01) hardware verdict + Wi-Fi-AP diagnostic image
+
+**Status: built OK; hardware boot FAILED (black box); pending Wi-Fi-AP diagnostic image.**
+
+The clean 17.01 image flashed cleanly over USB (`update --usb --openwrt-path …`:
+"Transfer complete", "Finished updating…", firmware skipped) but boots to the **same
+black box as 24.10**: USB re-enumerates (SAMD21 up, all interfaces OK) yet **POWER blinks
+forever** and t2-cli never connects (`list`/`version --usb` hang at "Looking for your
+Tessel…"). The board was recovered to factory via `restore --usb` (reliable).
+
+This does **not** cleanly falsify the "≤19.07 mechanical" *build* model — that model is
+about compilation, and it still holds (three hops built). The boot failure is a *runtime*
+result with **zero device visibility**: blinking-POWER + enumerated-USB + no-bridge is
+ambiguous between (a) kernel/init hangs early (nothing to do with spid) and (b) Linux
+boots but spid fails. We cannot tell which without a shell on the device.
+
+**Candidate root causes (cheapest first):**
+1. **Cross-distro config preservation** — the default flash preserves CC-15.05
+   `/etc/config` onto LEDE 17.01 ("Configuration is saved during update"). Cross-version
+   carry-over is a classic boot-breaker and is purely a *flashing-procedure* issue, not a
+   spid/DTS incompatibility. **Top suspect.**
+2. **Thin-overlay incompleteness** — image missing boot-critical Tessel bits. *Checked:
+   the 17.01 image manifest already contains the SoC Wi-Fi driver (`kmod-rt2800-soc`),
+   `wpad-mini`, `hostapd-common`, `dropbear`, `dnsmasq`, `netifd` — so it is not missing
+   networking/SSH/Wi-Fi. Lower probability than first thought.*
+3. **Genuine earlier runtime break** (spid SPI-bus autodetect / DTS) — least likely per
+   the build-source analysis, not excluded.
+
+**Decision: still DO NOT start the 21.02 pivot** (that gate — 17.01 up on hardware — is
+unmet). Instead, two software-only moves converted the black box into something
+diagnosable:
+
+### 10.1 Clean-config flash path (addresses suspect #1) — no rebuild
+t2-cli already supports it: `t2 update` has a stock **`-n`** flag
+(`bin/tessel-2.js` → `lib/tessel/update.js`: `opts.n` → `commands.sysupgradeNoSaveConfig`
+→ on-device **`sysupgrade -n`**), which skips config carry-over. So the config-reset test
+is just `update --usb --openwrt-path <img> -n` — zero image changes. If a clean `-n` flash
+boots (POWER steady) where the config-save flash blinked, suspect #1 is confirmed.
+
+### 10.2 Wi-Fi-AP diagnostic image (gives device visibility without serial)
+A `TESSEL_DIAG=1` build bakes a first-boot `/etc/uci-defaults/99-tessel-diag-wifi` script
+(via OpenWrt's `files/` mechanism) that raises a **WPA2 AP** (`Tessel-Diag` /
+`tesseldiag`) on the MT7620 SoC radio and sets a known root password. **If Linux boots at
+all**, a laptop joins the AP and SSHes to `root@192.168.1.1` to read `logread`/`dmesg` —
+bypassing the dead spid bridge entirely and telling us (i) whether Linux booted and (ii)
+exactly why spid didn't come up. Verified: the radio driver + `wpad`/`dropbear`/`dnsmasq`
+are already in the image; boot order (`kmodloader` → `uci_apply_defaults`) means the phy
+exists when the script runs, and `detect_mac80211` won't clobber the config.
+
+- **Build:** `TESSEL_DIAG=1 OPENWRT_TAG=v17.01.7 docker compose run --rm build` →
+  `output/lede-ramips-mt7620-tessel-squashfs-sysupgrade-DIAG.bin` (built OK, exit 0; diag
+  script confirmed baked into the staged rootfs). The gate keeps the normal validation
+  image clean (`rm -rf $SRC/files` unless `TESSEL_DIAG=1`).
+- **Flash it with `-n`** so the baked AP defaults take effect *and* the config-reset test
+  runs in the same shot.
+- Exact flash / join-AP / pull-logs commands + outcome-interpretation table:
+  `build/openwrt-incremental/DIAGNOSE-17.01-WIFI-AP.md`.
+
+### 10.3 UART serial console — gold-standard fallback
+If even the Wi-Fi-AP boot yields nothing, the hang is very early and only a serial
+console will show it. The kernel is already configured for it (DTS
+`bootargs = "console=ttyS0,115200"`, MT7620 UART0). 3.3 V USB-TTL on UART0 TX/RX/GND,
+115200 8N1. Details in the diagnostic doc §4.
+

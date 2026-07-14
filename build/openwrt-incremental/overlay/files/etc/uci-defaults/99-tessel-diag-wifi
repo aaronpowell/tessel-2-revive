@@ -1,0 +1,44 @@
+#!/bin/sh
+# 99-tessel-diag-wifi — first-boot diagnostic Wi-Fi AP for headless log access.
+#
+# WHY: the incremental OpenWrt images boot but t2-cli can't connect (the spid
+# coprocessor bridge is the suspect). With no serial console and a dead bridge
+# we have zero device visibility. This script raises a WPA2 AP on the MT7620
+# SoC radio (kmod-rt2800-soc, already in the image) so that — IF Linux boots at
+# all — a laptop can join the AP and SSH in to read `logread`/`dmesg` and see
+# whether spid started and why. It converts the black-box boot into something
+# diagnosable with no extra hardware.
+#
+# Runs once (uci-defaults are removed after a zero exit). kmodloader has already
+# run by the time uci-defaults execute, so the wifi phy exists and `wifi config`
+# can generate the radio synchronously here.
+
+# Generate the wireless config for the detected radio (async hotplug may not
+# have fired yet at this point in boot).
+/sbin/wifi config
+
+# If the radio still isn't present, keep this script and retry on the next boot.
+uci -q get wireless.radio0 >/dev/null || exit 1
+
+# Enable the radio and turn the auto-generated iface into our diagnostic AP.
+uci -q delete wireless.default_radio0
+uci -q batch <<'EOF'
+set wireless.radio0.disabled='0'
+set wireless.radio0.channel='6'
+set wireless.radio0.country='US'
+set wireless.diag=wifi-iface
+set wireless.diag.device='radio0'
+set wireless.diag.network='lan'
+set wireless.diag.mode='ap'
+set wireless.diag.ssid='Tessel-Diag'
+set wireless.diag.encryption='psk2'
+set wireless.diag.key='tesseldiag'
+commit wireless
+EOF
+
+# Set a known root password so SSH-over-Wi-Fi is deterministic (busybox passwd
+# reads the new password from stdin when not on a tty). Empty-password first-boot
+# login remains as a fallback if this ever fails.
+printf 'tesseldiag\ntesseldiag\n' | passwd root >/dev/null 2>&1
+
+exit 0
