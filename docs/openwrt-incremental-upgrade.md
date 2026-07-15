@@ -101,7 +101,7 @@ incrementally.
 | Hop | Release | Kernel | What newly activates | Bridge | Effort |
 |----:|---------|:------:|----------------------|:------:|--------|
 | 0 | 15.05 "Chaos Calmer" (baseline) | 3.18 | — all three legacy paths work | ✅ | — |
-| 1 | 17.01 "Reboot" | 4.4 | **SPI bus renumber** `32766 → 0` | ✅ *(1-line `spid.sh` fix)* | mechanical |
+| 1 | 17.01 "Reboot" | 4.4 | **Coprocessor CS1 SPI device fails to register** (factory `spidev@1`/CS1-on-`spi@b00` idiom invalid on the in-tree single-CS driver) + SPI bus renumber | ✅ **VALIDATED** *(DTS → `&spi1` + pin-37 `spi_cs1` pinmux patch; see §11)* | **real (bounded) DTS/pinmux fix** — not purely mechanical |
 | 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created) | ✅ | mechanical |
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created) | ✅ *(monitor)* | mechanical — **last easy hop** |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
@@ -116,7 +116,8 @@ incrementally.
 
 | Deviation | First bites at | Notes |
 |-----------|:--------------:|-------|
-| **SPI bus number** (`/dev/spidev32766.1`) | 17.01 (k4.4) | Modern Ralink SPI driver → bus `0`. Fix in `spid.sh`; verify actual node on boot (`ls /dev/spidev*`). Optionally pin via a DT `aliases { spi0 = &spi0; }`. |
+| **Coprocessor CS1 SPI-device registration** | **17.01 (k4.4)** | **True first hard break** (found on hardware, §11). Factory idiom `spidev@1`/CS1 under single `spi@b00` is rejected by the in-tree single-CS `spi-rt2880` driver. Fix: move coprocessor to the upstream **two-controller** `&spi1` (`spi@b40`, bus 1) as `spidev@0` (→ `/dev/spidev1.0`) + a **pin-37-only `spi_cs1`** kernel pinmux patch (which also frees pin 38 for the user2/POWER LED). Only visible at kernel runtime. |
+| **SPI bus number** (`/dev/spidev32766.1`) | 17.01 (k4.4) | Subsumed by the CS1 fix above: `spid-start` now autodetects `/dev/spidev*` (coprocessor enumerates as `/dev/spidev1.0`). Optionally pinned via the upstream DT `aliases { spi1 = &spi1; }`. |
 | **spidev DT compatible** | warns **18.06** (k4.14), hard 21.02 (k5.4) | `spidev_probe()` at k4.14 does `WARN(of_device_is_compatible(node,"spidev"), "buggy DT…")` — **warn-only, node still created** (verified in source, see §8). Both 18.06 and 19.07 are k4.14. Fix at the pivot: change DTS `compatible` to a whitelisted string (e.g. `rohm,dh2228fv`) or patch spidev's `of_device_id` table. |
 | **sysfs GPIO base / availability** | 21.02 (k5.4) → gone by 24.10 (k6.6) | gpiochip base dynamic → global `2`/`1` wrong; `CONFIG_GPIO_SYSFS` not default; interface removed later. Port `spid.c` to **libgpiod / `/dev/gpiochipN`**, addressing lines by `(chip, offset)`. |
 | **Device tree churn** | ongoing | mt7620 DTS moved to `dtsi` includes + `&label` overlays; re-express the Tessel board over each release's WRTnode/mt7620n base. |
@@ -376,9 +377,10 @@ console will show it. The kernel is already configured for it (DTS
 
 ## 11. Hop 1 (17.01) — the CS1 SPI-registration break, root cause + fix
 
-**Status: FIXED and HARDWARE-VALIDATED (SSH gate). Coprocessor SPI device now registers on
-real hardware; spid bridge is up and stable. Only the final USB t2-cli-connect check is
-outstanding (blocked on host-side USB flakiness, not the image).**
+**Status: ✅ FIXED and FULLY HARDWARE-VALIDATED. All success-gate items pass on real
+hardware: `/dev/spidev1.0` present, `spid` up and stable, coprocessor CS registers, POWER
+LED steady, and `t2-cli list --usb` → `USB␉LEDE` (end-to-end host→coprocessor→spid→MT7620).
+Hop 1 is proven; the incremental method works.**
 
 ### 11.1 What the Wi-Fi-AP shell proved
 The `-n` clean-config DIAG image brought up the `Tessel-Diag` AP and a working SSH shell.
@@ -462,10 +464,10 @@ t2-cli can't connect.
 If all pass, hop 1 (17.01) is validated on hardware and the incremental method is proven —
 only then does the **21.02 (k5.4)** pivot (spidev whitelist + libgpiod) begin.
 
-### 11.6 Hardware validation RESULT (SSH gate — PASSED)
-The CS1-fixed DIAG image was flashed with `-n` and inspected over the `Tessel-Diag`
-Wi-Fi/SSH shell on real hardware. **The SSH gate passes** (2 of 3 gate items definitively
-confirmed; the 3rd — USB t2-cli connect — is outstanding only due to host-side USB flakiness):
+### 11.6 Hardware validation RESULT — ALL gate items PASSED ✅
+The CS1-fixed DIAG image was flashed with `-n` and validated on real hardware, first over
+the `Tessel-Diag` Wi-Fi/SSH shell (bridge-level gate) and then via t2-cli over USB
+(end-to-end gate). **Every success-gate item passes.**
 
 ```
 # ls -l /dev/spidev*
@@ -475,25 +477,33 @@ spid[712]: Starting                                    ← bridge up; NO "Error 
 # dmesg | grep -i spi
 spi spi1.0: force spi mode3                            ← CS registers cleanly
 #   (the old fatal "spi_device register error /…/spidev@1" is GONE)
+
+host> node repos/t2-cli/bin/tessel-2.js list --usb
+USB	LEDE                                               ← t2-cli connected END-TO-END
 ```
 
-- **`/dev/spidev1.0` present + `spid` up and stable** → the DTS move to `&spi1` and the
-  pin-37-only `spi_cs1` pinmux patch are **correct and sufficient at 17.01/k4.4**. The CS1
-  break is fixed on hardware, not just at build time.
+- **`/dev/spidev1.0` present + `spid` up and stable + `t2-cli list --usb` → `USB␉LEDE`**
+  → the DTS move to `&spi1` and the pin-37-only `spi_cs1` pinmux patch are **correct and
+  sufficient at 17.01/k4.4**. The bridge works end-to-end
+  (host → coprocessor → spid over SPI → MT7620 → `uci get hostname` = `LEDE`), not just at
+  build time.
 - **Residual, non-fatal:** `spidev spi1.0: buggy DT: spidev listed directly in DT` +
   a `spidev.c:720` `WARN()` stack. This is a **warn-but-continue** — the node is still
   created (proven: `/dev/spidev1.0` exists and `spid` opened it). This is exactly the
   **k4.x "warns-but-works" stage** of the spidev-whitelist deviation (§1.2 / §4 stage 2);
   the **hard refusal** only arrives at k5.x, i.e. the **21.02** pivot. **Nothing to fix at
   17.01.**
-- **LED/pin-38:** the pinmux trim frees pin 38 (user2 LED), so POWER is expected to go
-  **steady**. Visual confirmation still pending from the bench.
-- **Outstanding:** the final gate item — `t2-cli list`/`version --usb` connecting over USB —
-  is not yet confirmed. It is blocked purely by **host-side USB flakiness**
-  (`LIBUSB_TRANSFER_STALL` recurred on flash-discovery/restore this session; cured by a
-  fresh power-cycle + a different direct USB port/cable, after which restore and the DIAG
-  flash both succeeded). The USB-connect test will be re-run on a clean endpoint.
+- **LED/pin-38:** the pinmux trim frees pin 38 (user2 LED); POWER LED is **visually
+  confirmed steady** on the bench — corroborating the pinmux patch took effect.
 
-**⇒ Hop 1 is functionally validated at the bridge level; awaiting only the USB t2-cli
-handshake before the all-clear. Stay parked at 19.07 — do NOT start the 21.02 pivot until
-t2-cli-over-USB on hop 1 is confirmed.**
+**⇒ Hop 1 (LEDE 17.01) is FULLY VALIDATED on hardware. The incremental clean-upstream +
+thin-overlay method is proven, and the CS1 SPI-registration fix is the first real (bounded)
+Tessel-integration port. The 21.02 (k5.4) pivot is now unblocked *in principle*; whether to
+hardware-validate 18.06/19.07 first (both built, predicted mechanical) or go straight to
+21.02 is a planning decision (see §7 / execution order).**
+
+> **Host-side USB note (not an image issue):** the flash/connect path fought severe
+> `LIBUSB_TRANSFER_STALL` this session. Reliable recipe: **fresh device power-cycle +
+> direct USB port/cable, then exactly one clean t2-cli op** — each stalled/killed op halts
+> the data endpoint until the next power-cycle. Captured in
+> `build/openwrt-incremental/FLASH-AND-VALIDATE.md` so future hops don't repeat the thrash.
