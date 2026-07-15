@@ -129,10 +129,20 @@ incrementally.
 
 ## 4. Earliest release where the bridge breaks (deliverable 2)
 
-There is **no single clean break**. The bridge unravels in **three stages**:
+There is **no single clean break**. The bridge unravels in **four stages** (the first
+was only discovered once we got a shell on real 17.01 hardware — see §11):
 
-1. **Earliest — cosmetic / mechanical:** the **SPI bus number** at **17.01 (k4.4)**.
-   One-line `spid.sh` change (`/dev/spidev32766.1` → `/dev/spidev0.1`).
+0. **First HARD break — coprocessor SPI device fails to register** at **17.01 (k4.4)**.
+   The factory tree put the coprocessor at `spidev@1` (chip-select **1**) under the
+   single `spi@b00` controller, relying on an out-of-tree Ralink SPI master that gave
+   that controller two chip-selects. The in-tree `spi-rt2880` driver gives `spi@b00`
+   only `num_chipselect = 1`, so `spi_add_device` rejects `chip_select = 1` →
+   `/dev/spidev0.1` is never created → spid crash-loops. **Needs a real (bounded)
+   DTS + kernel-pinmux fix** (§11). *Only visible at kernel runtime — pure build
+   analysis could not catch it.*
+1. **Cosmetic / mechanical:** the **SPI bus number** — the hard-coded
+   `/dev/spidev32766.1` no longer resolves. Handled by making `spid-start` autodetect
+   whatever `/dev/spidev*` node exists (now `/dev/spidev1.0`, see §11).
 2. **First break needing a DTS change:** the **spidev whitelist** — *warns* at
    **19.07 (k4.14)**, becomes *hard* by **21.02 (k5.4)**. Requires a whitelisted
    `compatible` in the DTS.
@@ -140,12 +150,14 @@ There is **no single clean break**. The bridge unravels in **three stages**:
    **sysfs-GPIO → libgpiod**. Begins at **21.02** (base renumber + not default), and
    is **unavoidable by 24.10 (k6.6)** once sysfs GPIO is gone.
 
-> **⇒ The pivotal porting release is 21.02 (kernel 5.4).** It is the first hop where
-> **both** a DTS spidev-compatible change **and** the GPIO character-device (libgpiod)
-> port become mandatory. Everything at or below **19.07** is mechanical config work;
-> **21.02 is where the genuine driver/bring-up engineering lands.** Hops 22.03 → 24.10
-> then become comparatively mechanical once 21.02 is solved, plus the switch/firewall
-> config migrations.
+> **⇒ Model correction:** the earlier claim that *"everything at/below 19.07 is purely
+> mechanical"* is **partially falsified**. Stage 0 (CS1 SPI-device registration) is a
+> genuine — though bounded — DTS/driver fix that lands right at **hop 1 (17.01)**. It is
+> the true **first hard break** and the current proof-of-method. GPIO/libgpiod is still a
+> separate, later concern: sysfs GPIO with a base-0 gpiochip is present and valid at k4.4,
+> so that vector is **not** yet active at 17.01. The **21.02 (k5.4)** pivot (DTS
+> spidev-compatible swap **and** libgpiod GPIO port) remains the deepest engineering step;
+> everything between the 17.01 CS1 fix and 21.02 is mechanical.
 
 ---
 
@@ -357,3 +369,91 @@ console will show it. The kernel is already configured for it (DTS
 `bootargs = "console=ttyS0,115200"`, MT7620 UART0). 3.3 V USB-TTL on UART0 TX/RX/GND,
 115200 8N1. Details in the diagnostic doc §4.
 
+---
+
+## 11. Hop 1 (17.01) — the CS1 SPI-registration break, root cause + fix
+
+**Status: Linux boots fine; break localized to the coprocessor SPI device; CS1 fix built
+into a new DIAG image — pending hardware re-verify.**
+
+### 11.1 What the Wi-Fi-AP shell proved
+The `-n` clean-config DIAG image brought up the `Tessel-Diag` AP and a working SSH shell.
+That **rules out** the two cheap suspects from §10: config carry-over (this was a clean
+`-n` flash and it still blinked) and overlay incompleteness (AP + SSH + dropbear + dnsmasq
+all run). **Linux boots. The blinking POWER LED is a red herring** — it only means the
+Tessel LED/bridge setup didn't finish, not that the kernel failed to boot. (The earlier
+24.10 "black box" almost certainly had Linux up with spid failing too.)
+
+### 11.2 The smoking gun (LEDE 17.01, kernel 4.4.182, over SSH)
+```
+# ls -l /dev/spidev*     → No such file or directory
+# logread | grep -i spi
+  spi_master spi0: spi_device register error /palmbus@10000000/spi@b00/spidev@1
+  spi_master spi0: Failed to create SPI device for /palmbus@10000000/spi@b00/spidev@1
+  spid[...]: Error opening SPI device /dev/spidev0.1: No such file or directory  (crash loop)
+  procd: Instance spid::instance1 is in a crash loop 6 crashes → gave up
+# dmesg | grep -i spi
+  spi spi0.0: force spi mode3               ← CS0 (flash) registers fine
+  spi_master spi0: spi_device register error /palmbus@10000000/spi@b00/spidev@1   ← CS1 FAILS
+# leds-gpio: probe of gpio-leds failed with error -2 ; rt2880-pinmux: pin 38 is not set to gpio mux
+```
+CS0 (the SPI-NOR flash) registers; **CS1 (`spidev@1`, `reg=<1>`) fails at
+`spi_add_device`** → `/dev/spidev0.1` never exists → spid crash-loops → no bridge →
+t2-cli can't connect.
+
+### 11.3 Root cause (pinned to source)
+- **The Tessel idiom is one-controller-two-CS.** The factory 3.18 DTS placed the
+  coprocessor at `spidev@1` (chip-select **1**) under `spi@b00`, and the factory kernel
+  carried out-of-tree patches (`0050`/`0051`/`999-mt7620-spi-cs1` in `tessel/openwrt`)
+  that made that single controller expose **two** chip-selects (per-CS register banks,
+  `master->num_chipselect = ops->num_cs`).
+- **Upstream OpenWrt/LEDE re-expressed the MT7620 dual-CS as two *separate* controllers**
+  sharing the SPI arbiter: `spi0: spi@b00` (bus 0, flash on CS0) and
+  `spi1: spi@b40` (bus 1, the coprocessor). The in-tree `spi-rt2880` driver already drives
+  bus 1 (`bus_num==1 → SPI1_POR | ARB_EN`; `get_arbiter_offset()` maps both to the shared
+  arbiter at `0xbF0`). But `spi@b00` there is a **single-CS** controller
+  (`num_chipselect = 1`), so the factory's `chip_select = 1` node is invalid → the CS1
+  registration error above.
+- **The missing pinmux piece.** Upstream `spi1: spi@b40` references pinctrl group
+  **`spi_cs1`**, but stock `arch/mips/ralink/mt7620.c` never defines it — it only has
+  `"spi refclk"` spanning **pins 37, 38, 39**. So `&spi1` could not be muxed, *and* pin 38
+  (Tessel's user2 blue LED, `gpio1 14`) explains the cosmetic `leds-gpio error -2` /
+  `pin 38 is not set to gpio mux` warnings.
+
+### 11.4 The fix (built this session — the upstream two-controller model)
+1. **DTS** (`overlay/dts/Tessel.dts`): move the coprocessor off `&spi0` and onto
+   `&spi1 { status = "okay"; spidev@0 { compatible = "spidev"; reg = <0>; … }; }`.
+   `aliases { spi1 = &spi1; }` (upstream) fixes the bus number, so the coprocessor now
+   enumerates as **`/dev/spidev1.0`**. `&spi0` is left flash-only. The stale
+   `state_default` `"spi cs1"` mux entry (which referenced a non-existent group) was
+   removed — `&spi1`'s own `pinctrl-0 = <&spi_cs1>` now handles muxing.
+2. **Kernel pinmux patch**
+   (`overlay/patches/ramips/patches-4.4/999-tessel-mt7620-spi-cs1.patch`): define the
+   `spi_cs1` group as **pin 37 only** — `FUNC("spi_cs1", 0, 37, 1)` /
+   `GRP("spi_cs1", refclk_grp, 1, MT7620_GPIO_MODE_SPI_REF_CLK)`. Keeps the same hardware
+   mode bit (`SPI_REF_CLK`, which makes pin 37 the 2nd SPI chip-select on MT7620) but
+   trims the group from 3 pins to 1, so **pins 38/39 stay free** — this fixes CS1 **and**
+   the POWER/user2 LED in one shot. Mirrors the factory `999-mt7620-spi-cs1.patch` intent,
+   re-expressed for the in-tree two-controller layout.
+3. **`spid-start`**: pick the first `/dev/spidev*` that exists (fallback `/dev/spidev1.0`)
+   instead of hard-coding a bus/CS — robust across renumbering. The flash uses the
+   `spi-nor` driver, which creates **no** spidev node, so the coprocessor is the only one.
+4. **Build harness**: `build.sh` `apply_overlay()` now copies overlay kernel patches into
+   `target/linux/ramips/patches-<kver>/` via a `kernel_patch_dir()` map (17.01→`patches-4.4`),
+   so the 4.4-context patch never leaks into the parked 18.06/19.07 (k4.14) trees.
+
+**Build-level verification (this session):** rebuilt `v17.01.7` DIAG after
+`make target/linux/clean`; the 999 patch applied with no `.rej`; the built kernel's
+`mt7620.c` shows `spi_cs1` at pin 37; the compiled DTB shows `spi@b40 status="okay"` with
+`spidev@0 compatible="spidev" reg=<0>` and the `spi_cs1` pinmux group resolving. Artifact:
+`output/lede-ramips-mt7620-tessel-squashfs-sysupgrade-DIAG.bin` (3.3 MB).
+
+### 11.5 Hardware success gate (after flashing the CS1-fixed DIAG image, over SSH)
+- `ls /dev/spidev*` → a node exists (expect **`/dev/spidev1.0`**).
+- `logread | grep -i spid` → spid running, **no** "Error opening SPI device", no crash loop.
+- `dmesg | grep -i spi` → **no** "spi_device register error"; the coprocessor CS registers.
+- POWER LED goes **steady** (pin-38 freed) — bonus confirmation of the pinmux trim.
+- Then `node repos/t2-cli/bin/tessel-2.js list` / `version --usb` → **connects**.
+
+If all pass, hop 1 (17.01) is validated on hardware and the incremental method is proven —
+only then does the **21.02 (k5.4)** pivot (spidev whitelist + libgpiod) begin.

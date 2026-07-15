@@ -1,15 +1,17 @@
 #!/bin/sh
 # spid-start — launch the SPI bridge daemon.
 #
-# Hop-1 mechanical fix: the legacy launcher hard-coded /dev/spidev32766.1 (the bus
-# number the old out-of-tree Ralink SPI master assigned). Modern drivers enumerate
-# the bus as 0, so we AUTODETECT the CS1 spidev node instead.
+# The Tessel coprocessor is the ONLY spidev on the bus (the SPI-NOR flash uses
+# the m25p80/spi-nor driver, which does not create a /dev/spidev node). On the
+# upstream two-controller model it enumerates as /dev/spidev1.0 (spi@b40, bus 1,
+# CS0); on other kernels the bus number may differ. So just pick the first
+# /dev/spidev* node that exists rather than hard-coding bus/CS numbers.
 mkdir -p /var/run/tessel
 ln -sf /var/run/tessel/1 /var/run/tessel/port_a
 ln -sf /var/run/tessel/2 /var/run/tessel/port_b
 
-SPIDEV="$(ls /dev/spidev*.1 2>/dev/null | head -n1)"
-[ -z "$SPIDEV" ] && SPIDEV=/dev/spidev0.1
+SPIDEV="$(ls /dev/spidev* 2>/dev/null | head -n1)"
+[ -z "$SPIDEV" ] && SPIDEV=/dev/spidev1.0
 
 # IRQ GPIO = 2, SYNC GPIO = 1 (global sysfs numbers; valid while gpiochip base is 0).
 exec spid "$SPIDEV" 2 1 /var/run/tessel

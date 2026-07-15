@@ -1,0 +1,33 @@
+Tessel 2: expose a pin-37-only "spi_cs1" pinmux group on mt7620.
+
+The Tessel coprocessor (SAMD21) sits on the MT7620's second SPI chip-select.
+In the upstream OpenWrt/LEDE ramips model this second CS is a *separate* SPI
+controller, spi1: spi@b40 (bus 1), whose pinctrl references a group called
+"spi_cs1". Stock mt7620.c does not define that group -- it only has "spi refclk"
+which spans pins 37,38,39. Muxing all three would (a) never satisfy the spi@b40
+"spi_cs1" pinctrl reference (so CS1 is never driven) and (b) steal pin 38, which
+Tessel wires to the user2 (blue) LED, breaking leds-gpio.
+
+Mirror what the Tessel factory tree did on 3.18 (999-mt7620-spi-cs1.patch): keep
+the same hardware mode bit (MT7620_GPIO_MODE_SPI_REF_CLK, which makes pin 37 the
+2nd SPI chip-select) but trim the group to pin 37 only and rename it to the
+"spi_cs1" name the ramips .dtsi already expects. Pins 38/39 stay free for GPIO/LED.
+
+--- a/arch/mips/ralink/mt7620.c
++++ b/arch/mips/ralink/mt7620.c
+@@ -60,7 +60,7 @@ static struct rt2880_pmx_func mdio_grp[] = {
+ 	FUNC("refclk", MT7620_GPIO_MODE_MDIO_REFCLK, 22, 2),
+ };
+ static struct rt2880_pmx_func rgmii1_grp[] = { FUNC("rgmii1", 0, 24, 12) };
+-static struct rt2880_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };
++static struct rt2880_pmx_func refclk_grp[] = { FUNC("spi_cs1", 0, 37, 1) };
+ static struct rt2880_pmx_func ephy_grp[] = { FUNC("ephy", 0, 40, 5) };
+ static struct rt2880_pmx_func rgmii2_grp[] = { FUNC("rgmii2", 0, 60, 12) };
+ static struct rt2880_pmx_func wled_grp[] = { FUNC("wled", 0, 72, 1) };
+@@ -98,7 +98,7 @@ static struct rt2880_pmx_group mt7620a_pinmux_data[] = {
+ 	GRP("rgmii1", rgmii1_grp, 1, MT7620_GPIO_MODE_RGMII1),
+-	GRP("spi refclk", refclk_grp, 1, MT7620_GPIO_MODE_SPI_REF_CLK),
++	GRP("spi_cs1", refclk_grp, 1, MT7620_GPIO_MODE_SPI_REF_CLK),
+ 	GRP_G("pcie", pcie_rst_grp, MT7620_GPIO_MODE_PCIE_MASK,
+ 		MT7620_GPIO_MODE_PCIE_GPIO, MT7620_GPIO_MODE_PCIE_SHIFT),
+ 	GRP_G("nd_sd", nd_sd_grp, MT7620_GPIO_MODE_ND_SD_MASK,

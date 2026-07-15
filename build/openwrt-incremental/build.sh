@@ -33,6 +33,17 @@ feed_branch() {
   esac
 }
 
+# Map an OpenWrt release tag to its ramips kernel patches dir (per kernel version).
+# Kept separate so a kernel-version-specific patch never leaks into another hop.
+kernel_patch_dir() {
+  case "$OPENWRT_TAG" in
+    v17.01.*)          echo "patches-4.4" ;;
+    v18.06.*|v19.07.*) echo "patches-4.14" ;;
+    v21.02.*)          echo "patches-5.4" ;;
+    *)                 echo "" ;;
+  esac
+}
+
 clone_sources() {
   if [[ ! -d "$SRC/.git" ]]; then
     echo "==> Cloning upstream OpenWrt $OPENWRT_TAG ..."
@@ -49,6 +60,17 @@ apply_overlay() {
   # tessel-tools package
   rm -rf "$SRC/package/tessel-tools"
   cp -r "$OVERLAY/tessel-tools" "$SRC/package/tessel-tools"
+
+  # Tessel-specific kernel patches (e.g. the mt7620 spi_cs1 pinmux). Copied into
+  # the ramips patches dir matching this release's kernel version; OpenWrt applies
+  # them (numeric order, after upstream patches) during the kernel prepare step.
+  local kpd; kpd="$(kernel_patch_dir)"
+  if [[ -n "$kpd" && -d "$OVERLAY/patches/ramips/$kpd" ]]; then
+    echo "==> Installing Tessel ramips kernel patches into target/linux/ramips/$kpd ..."
+    mkdir -p "$SRC/target/linux/ramips/$kpd"
+    cp "$OVERLAY/patches/ramips/$kpd/"*.patch "$SRC/target/linux/ramips/$kpd/"
+    ls "$SRC/target/linux/ramips/$kpd/"9*-tessel-*.patch 2>/dev/null || true
+  fi
 
   # Add a Device/tessel profile to the mt7620 image Makefile (idempotent).
   local mk="$SRC/target/linux/ramips/image/mt7620.mk"
