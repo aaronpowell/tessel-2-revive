@@ -561,9 +561,113 @@ POWER LED are the expected runtime result. **Status: HARDWARE-VALIDATED (see §1
 Success gate = §11.5 (`/dev/spidev1.0` present, `spid` up with no error/crash, steady POWER
 LED, then `t2-cli list --usb` → `USB␉…`).
 
+### 12.3 Flash-path blockers (two, both flashing-procedure — orthogonal to the CS1/DTS work)
+Getting an image to actually *write* on a hop ≥ 18.06 exposed **two independent t2-cli/OpenWrt
+flash-path bugs**, both of which silently no-op'd the flash (transfer succeeds, "Finished"
+prints, device reboots into the *old* release). Neither has anything to do with the CS1/DTS
+fix. **Blocker A** = the sysupgrade image-metadata compat check (below); **Blocker B** = t2-cli
+clobbering the device's `/lib/upgrade/common.sh` (found on 18.06→19.07, now fixed in t2-cli —
+see §12.3.1).
+
+**Blocker A — cross-version sysupgrade `supported_devices` metadata mismatch:**
+
+- `node …/tessel-2.js update --usb --openwrt-path <18.06.bin> -n` **transfers** the 3.67 MB
+  image and prints *"Finished"*, **but the device stays on 17.01** (`uname` = 4.4.182 /
+  LEDE) even after a clean power-cycle — the image was **not written**.
+- **Root cause:** OpenWrt `sysupgrade` (17.01+) runs `fwtool_check_image`, which compares the
+  image's appended `supported_devices` metadata against the **running board's device-tree
+  `compatible`** and refuses on mismatch. `Device/tessel` (`image/mt7620.mk`) sets **no
+  `SUPPORTED_DEVICES`**, so it defaults to the profile name `tessel`, while the board's DT
+  root `compatible = "tessel,tessel2", "wrtnode", …`. `tessel` ∉ the board compatibles →
+  **refused.** The **visible sysupgrade log** (once Blocker B was fixed and device output was
+  no longer swallowed) confirmed it verbatim:
+  ```
+  [sysupgrade] Device tessel,tessel2 not supported by this image
+  [sysupgrade] Supported devices: tessel
+  [sysupgrade] Image check 'fwtool_check_image' failed but force given -- will update anyway!
+  [sysupgrade] Commencing upgrade. Closing all shell sessions.
+  ```
+  ⇒ The running board identifies as **`tessel,tessel2`** (its DT compatible), *not* the legacy
+  `board_name()` value. **Correction to the earlier analysis:** the `/tmp/sysinfo/board_name =
+  "generic"` finding (below) is the **legacy `board_name()` path** — real, but *not* the check
+  that fires here. The operative 18.06+ gate is **`fwtool_check_image` on the DT compatible
+  `tessel,tessel2`**, so the correct permanent fix is `SUPPORTED_DEVICES := tessel tessel2`
+  (matching `compatible = "tessel,tessel2"`), **not** adding `generic`.
+- **Why only now:** this metadata compat check exists in 17.01+ but **not in 15.05**, which
+  is exactly why factory(15.05)→17.01 flashed clean and 17.01→18.06 refuses. It will recur
+  on **every** hop from 17.01 upward.
+- **Legacy `board_name()` note (secondary, not the operative gate):** on ramips,
+  `/tmp/sysinfo/board_name` is written by `ramips_board_detect()`
+  (`target/linux/ramips/base-files/lib/ramips.sh`) from a `case "$machine"` over the DTS
+  `model` string. **There is no "Tessel 2" case**, so `$name` stays empty, the function
+  `return`s early *without writing* the file, and `board_name()`
+  (`package/base-files/.../functions.sh:351`) falls back to the literal `"generic"`. This
+  affects `board_name`-keyed config/upgrade paths but is **not** what `fwtool_check_image`
+  compares (that uses the DT compatible). Baking a self-ID fix into a NEW image still cannot
+  remove the force for the hop that flashes *onto* it (the running *source* is unchanged).
+- t2-cli invokes `sysupgrade -n` with **no force** (`lib/tessel/commands.js:145`,
+  `lib/tessel/update.js:81-88`) → no built-in override.
+
+**Immediate unblock (parent, in the main repo's t2-cli submodule — this worktree has no
+submodules):** an opt-in, env-gated force in `lib/tessel/update.js` — when
+`T2_FORCE_FLASH` is set, splice `-F` into the `sysupgrade` command (mirrors the
+`T2_RESTORE_URL` convention; default behaviour unchanged). Forcing is **safe here**: the
+image is the correct `ramips/mt7620` tessel build; only the cosmetic
+`supported_devices` mismatch trips the check, and restore recovery remains
+available. **Validated on hardware:** `T2_FORCE_FLASH=1` wrote 18.06 for real (device
+booted `OpenWrt 18.06.9`, hostname flipped LEDE→OpenWrt).
+
+### 12.3.1 Blocker B — t2-cli clobbered the device's `/lib/upgrade/common.sh` (the real repeat no-op; fixed in t2-cli)
+The 19.07 flash silently no-op'd **twice** before device-side output was visible. Root cause
+(fixed by the parent in this repo's t2-cli):
+
+- Before every sysupgrade, t2-cli's `fixOldUpdateScripts()` **overwrote the running system's
+  `/lib/upgrade/common.sh`** with a bundled **Chaos-Calmer-era** copy
+  (`resources/openwrt/common.sh`). That legacy file's only Tessel purpose is a `kill_remaining()`
+  that skips `spid`/`usbexecd`.
+- But **18.06+ refactored sysupgrade** to pivot into a ramfs and **moved `kill_remaining`/
+  `run_ramfs` out of `common.sh`, renaming the flash routine to `do_upgrade_stage2`.** So on
+  18.06 the clobber (a) gave **zero** spid benefit and (b) **deleted `do_upgrade_stage2`** →
+  sysupgrade called a now-undefined flash routine → **rebooted WITHOUT writing** → back to
+  18.06. This is why 17.01→18.06 worked (17.01 matched the old file's era) but 18.06→19.07
+  didn't — and it would have bitten **every** subsequent hop and the 24.10 jump too.
+- **Fix (t2-cli):** made `fixOldUpdateScripts()` **version-aware** — it reads the pristine
+  `/rom/lib/upgrade/common.sh`; if that contains `do_upgrade_stage2` (modern), it **restores**
+  it over any clobbered overlay copy and **skips** the legacy override (which now only applies
+  to genuinely old images). It also **self-heals** an already-clobbered device. Added
+  `[sysupgrade]` stdout/stderr logging (gated on `T2_FORCE_FLASH`) so device-side output is no
+  longer swallowed — which is how Blocker A's exact message finally became visible.
+
+**Candidate PERMANENT fixes for Blocker A (to weigh) — force stays required for in-flight hops regardless:**
+- **(a) A proper t2-cli `--force-flash` CLI flag** (instead of the env var) — a clean,
+  discoverable override for the whole hop series. Belongs in t2-cli, not the image.
+- **(b) Make images self-ID correctly** — the *correct* lever is **not** `/etc/board.d`
+  (those scripts consume `board_name`, they don't set it) but either a **`case` for
+  `"Tessel 2"` added to `ramips_board_detect()`** (brittle: patches a huge upstream file) or,
+  cleaner for the overlay, a **small preinit hook** writing `board_name`. **Caveat (proven at
+  source):** this only affects the *running* system once such an image is installed, so it can
+  never remove the force for a hop whose *source* image predates it.
+- **(c) Pragmatic chain-wide unblock: `SUPPORTED_DEVICES := tessel tessel2`** on
+  `Device/tessel` (matching the board's DT `compatible = "tessel,tessel2"` that
+  `fwtool_check_image` actually reads). This makes every built image *accept* the running
+  Tessel board, so **no force is needed on any hop**. Clean and semantically correct — this is
+  the recommended permanent fix.
+
+**Recommendation / decision:** keep `T2_FORCE_FLASH` as the operational unblock for the
+mechanical series now (proven safe, and required for 18.06→19.07 anyway since the *source*
+image predates any fix). **Do not entangle a `SUPPORTED_DEVICES` change into a per-hop DIAG
+build** — that would add an untested delta to an otherwise single-delta hop and muddy its
+hardware verdict. Fold the permanent fix (prefer **(c)** `SUPPORTED_DEVICES := tessel tessel2`
+for a clean chain-wide force-free result, optionally plus **(b)** for correct legacy self-ID)
+into an **isolated rebuild** after the mechanical series, at/around the 21.02 pivot. Blocker B
+is already fixed in t2-cli. **Status: 18.06 flashed & booted via force and fully
+hardware-validated (§12.4); 19.07 flashed via force after the Blocker-B fix (§13, HW verdict
+pending); permanent Blocker-A fix deferred to the pivot rebuild.**
+
 ### 12.4 Hop 2 (18.06) hardware validation RESULT — PASS ✅
 Flashed with `T2_FORCE_FLASH=1` (the metadata-gate force from §12.3) — which wrote the image
-for real (the earlier `-n` attempt silently no-op'd on the board_name mismatch).
+for real (the earlier `-n` attempt silently no-op'd on the `fwtool_check_image`
+`supported_devices` mismatch, `tessel,tessel2` vs `["tessel"]` — see §12.3 Blocker A).
 
 - **Boot:** `OpenWrt 18.06.9, r8077-7cbbab7246` / `Linux OpenWrt 4.14.206`. Hostname flipped
   LEDE→OpenWrt (expected — 18.06 dropped the LEDE branding). Force override confirmed working.
@@ -599,74 +703,9 @@ changes** — the single strongest confirmation that the k4.14 port is release-g
   sha256 `E47AC2775C55312D65C2F5B78E3881098EC161CF99142B21AAA0C6968E2BA87D`).
 
 **Status: built + build-source-verified; awaiting hardware flash/verify.** Flash with
-`T2_FORCE_FLASH=1` (source 18.06 reports `board_name=generic`, so force is required — §12.3).
-Success gate = §11.5 (`/dev/spidev1.0`, `spid` up no error/crash, steady POWER LED, then
-`t2-cli list --usb` → `USB␉OpenWrt`). The 21.02 pivot stays parked until 19.07 is
+`T2_FORCE_FLASH=1` (the running board's DT compatible `tessel,tessel2` ∉ image
+`supported_devices:["tessel"]`, so `fwtool_check_image` refuses without force — §12.3
+Blocker A). Also requires the t2-cli common.sh-clobber fix (§12.3.1) or the flash silently
+no-ops. Success gate = §11.5 (`/dev/spidev1.0`, `spid` up no error/crash, steady POWER LED,
+then `t2-cli list --usb` → `USB␉OpenWrt`). The 21.02 pivot stays parked until 19.07 is
 hardware-validated.
-
-
-### 12.3 Flash gate found: cross-version sysupgrade board_name/supported_devices mismatch
-The first 18.06 flash attempt exposed a **flashing-procedure** blocker *before* the CS1 fix
-could even be tested (the image never boots, so this is orthogonal to the DTS/pinmux work):
-
-- `node …/tessel-2.js update --usb --openwrt-path <18.06.bin> -n` **transfers** the 3.67 MB
-  image and prints *"Finished"*, **but the device stays on 17.01** (`uname` = 4.4.182 /
-  LEDE) even after a clean power-cycle — the image was **not written**.
-- **Root cause (pinned):** OpenWrt `sysupgrade` (17.01+) compares the *running* system's
-  `board_name` (`/tmp/sysinfo/board_name`) against the image's appended
-  `supported_devices` metadata and refuses on mismatch. The Tessel target never set a
-  `board.d` board name, so **17.01 self-reports `board_name = "generic"`**, while the built
-  18.06 image advertises `{"supported_devices":["tessel"],"version":{…"18.06.9"…}}`. `"generic"`
-  ∉ `["tessel"]` → **sysupgrade exits without writing.**
-- **Why only now:** this metadata compat check exists in 17.01+ but **not in 15.05**, which
-  is exactly why factory(15.05)→17.01 flashed clean and 17.01→18.06 refuses. It will recur
-  on **every** hop from 17.01 upward.
-- **Exact source mechanism (confirmed in the k4.14 tree):** on ramips, `/tmp/sysinfo/board_name`
-  is written by `ramips_board_detect()` in `target/linux/ramips/base-files/lib/ramips.sh`,
-  which sets `$name` from a `case "$machine"` over the DTS `model` string. **There is no
-  "Tessel 2" case**, so `$name` stays empty, the function `return`s early *without writing*
-  `/tmp/sysinfo/board_name`, and `board_name()` (`package/base-files/.../functions.sh:351`)
-  falls back to the literal `"generic"`. Meanwhile `Device/tessel` (`image/mt7620.mk`) sets
-  **no `SUPPORTED_DEVICES`**, so it defaults to the profile name `tessel`. Net: every one of
-  17.01/18.06/19.07 self-reports `board_name = "generic"` while every image advertises
-  `["tessel"]`. **⇒ Baking a `board_name = "tessel"` fix into a NEW image does not remove the
-  force for the hop that flashes *onto* it, because the *running source* system still reports
-  `"generic"`.** (e.g. 18.06→19.07 needs force because the running 18.06 says "generic",
-  regardless of what the 19.07 image self-reports.)
-- t2-cli invokes `sysupgrade -n` with **no force** (`lib/tessel/commands.js:145`,
-  `lib/tessel/update.js:81-88`) → no built-in override.
-
-**Immediate unblock (parent, in the main repo's t2-cli submodule — this worktree has no
-submodules):** an opt-in, env-gated force in `lib/tessel/update.js` — when
-`T2_FORCE_FLASH` is set, splice `-F` into the `sysupgrade` command (mirrors the
-`T2_RESTORE_URL` convention; default behaviour unchanged). Forcing is **safe here**: the
-image is the correct `ramips/mt7620` tessel build; only the cosmetic
-`board_name`/`supported_devices` mismatch trips the check, and restore recovery remains
-available. **Validated on hardware:** `T2_FORCE_FLASH=1` wrote 18.06 for real (device
-booted `OpenWrt 18.06.9`, hostname flipped LEDE→OpenWrt).
-
-**Candidate PERMANENT fixes (to weigh) — force stays required for in-flight hops regardless:**
-- **(a) A proper t2-cli `--force-flash` CLI flag** (instead of the env var) — a clean,
-  discoverable override for the whole hop series. Belongs in t2-cli, not the image.
-- **(b) Make images self-ID as `"tessel"`** — the *correct* lever is **not** `/etc/board.d`
-  (those scripts consume `board_name`, they don't set it) but either a **`case` for
-  `"Tessel 2"` added to `ramips_board_detect()`** (brittle: patches a huge upstream file) or,
-  cleaner for the overlay, a **small preinit hook** that writes `tessel` to
-  `/tmp/sysinfo/board_name` (and set `SUPPORTED_DEVICES := tessel` explicitly). **Caveat
-  (now proven at source):** this only affects the *running* system once such an image is
-  installed, so it can never remove the force for a hop whose *source* image predates it.
-- **(c) Pragmatic chain-wide unblock: `SUPPORTED_DEVICES := tessel generic`** on
-  `Device/tessel`. This makes every built image *accept* a running `board_name` of either
-  `tessel` **or** `generic`, so **no force is needed on any hop** (all current releases report
-  `generic`). Semantically loose (`generic` is a broad token) but effective; low-risk in our
-  single-hardware context.
-
-**Recommendation / decision:** keep `T2_FORCE_FLASH` as the operational unblock for the
-mechanical series now (proven safe, and required for 18.06→19.07 anyway since the source
-reports `generic`). **Do not entangle a `board_name`/`SUPPORTED_DEVICES` change into a
-per-hop DIAG build** — that would add an untested delta to an otherwise single-delta hop and
-muddy its hardware verdict. Fold the permanent fix (prefer **(c)** for a clean chain-wide
-force-free result, optionally plus **(b)** for correct self-ID) into an **isolated rebuild**
-after the mechanical series, at/around the 21.02 pivot. **Status: 18.06 flashed & booted via
-force and fully hardware-validated (§12.2); 19.07 built the same way (§13); board_name fix
-deferred to the pivot rebuild.**
