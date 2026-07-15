@@ -102,8 +102,8 @@ incrementally.
 |----:|---------|:------:|----------------------|:------:|--------|
 | 0 | 15.05 "Chaos Calmer" (baseline) | 3.18 | — all three legacy paths work | ✅ | — |
 | 1 | 17.01 "Reboot" | 4.4 | **Coprocessor CS1 SPI device fails to register** (factory `spidev@1`/CS1-on-`spi@b00` idiom invalid on the in-tree single-CS driver) + SPI bus renumber | ✅ **VALIDATED** *(DTS → `&spi1` + pin-37 `spi_cs1` pinmux patch; see §11)* | **real (bounded) DTS/pinmux fix** — not purely mechanical |
-| 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ *(CS1-fixed DIAG built; HW-pending)* | mechanical + trivial 1-line pinmux port |
-| 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created) | ✅ *(monitor)* | mechanical — **last easy hop** |
+| 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ **VALIDATED** *(force-flash; §12.4)* | mechanical + trivial 1-line pinmux port |
+| 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13) | ✅ *(CS1-fixed DIAG built; HW-pending)* | mechanical — **last easy hop** |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ⚠️ | medium |
 | 6 | 23.05 | 5.15 | stricter spidev; libgpiod effectively mandatory; switch DSA; cmake/toolchain bumps (the `urngd` CRT workaround) | ⚠️ | medium |
@@ -557,9 +557,53 @@ LED), same net effect as the 17.01 fix. The overlay `Tessel.dts` is unchanged
   `openwrt-ramips-mt7620-tessel-squashfs-sysupgrade-DIAG.bin`, 3.6 MB).
 
 This mirrors the hardware-validated 17.01 chain exactly, so `/dev/spidev1.0` and a steady
-POWER LED are the expected runtime result. **Status: built + build-source-verified;
-awaiting hardware flash/verify.** Success gate = §11.5 (`/dev/spidev1.0` present, `spid`
-up with no error/crash, steady POWER LED, then `t2-cli list --usb` → `USB␉…`).
+POWER LED are the expected runtime result. **Status: HARDWARE-VALIDATED (see §12.4).**
+Success gate = §11.5 (`/dev/spidev1.0` present, `spid` up with no error/crash, steady POWER
+LED, then `t2-cli list --usb` → `USB␉…`).
+
+### 12.4 Hop 2 (18.06) hardware validation RESULT — PASS ✅
+Flashed with `T2_FORCE_FLASH=1` (the metadata-gate force from §12.3) — which wrote the image
+for real (the earlier `-n` attempt silently no-op'd on the board_name mismatch).
+
+- **Boot:** `OpenWrt 18.06.9, r8077-7cbbab7246` / `Linux OpenWrt 4.14.206`. Hostname flipped
+  LEDE→OpenWrt (expected — 18.06 dropped the LEDE branding). Force override confirmed working.
+- **CS1 fix HOLDS on k4.14:** `/dev/spidev1.0` present (`153, 0`); `dmesg: spi spi1.0: force
+  spi mode3`; **zero** `spi_device register error`. The single-line `"spi refclk"` pin-37 trim
+  is runtime-equivalent to the 17.01 fix — proven, not just build-verified.
+- **t2-cli end-to-end:** `list --usb` → `USB␉OpenWrt`. Bridge works host→coprocessor→spid→MT7620.
+- **Residual (non-fatal):** same `buggy DT: spidev listed directly in DT` WARN (warns-but-creates)
+  — the k5.x hard refusal is still the 21.02 item. POWER LED steady (pin-38 freed by the patch).
+- **Transient startup race (benign):** the first `spid` instance logged `Error connecting to USB
+  Daemon socket /var/run/tessel/usb: No such file or directory` (spid raced ahead of `usbexecd`
+  creating the socket); procd respawned it and `spid[1038]` came up and serviced the connection.
+  **This is a self-healing startup order race, NOT a crash loop and NOT the spidev-registration
+  error.** Flag for later hops: if it ever fails to self-heal, add a procd `after`/dependency on
+  `usbexecd`; benign at 18.06.
+
+**⇒ Hop 2 (18.06) is FULLY hardware-validated. The "17.01→19.07 mechanical" model is now
+runtime-proven at BOTH 17.01 and 18.06.**
+
+## 13. Hop 3 (19.07) — same k4.14 CS1 patch, DIAG image built (hardware-pending)
+19.07 is also kernel **4.14** with the **same** stock `mt7620n.dtsi` group name `"spi refclk"`,
+so the hop-2 `patches-4.14/999-tessel-mt7620-spi-cs1.patch` **drops straight in with zero
+changes** — the single strongest confirmation that the k4.14 port is release-general.
+
+### 13.1 Build-source verification (19.07, kernel 4.14.275) — PASS
+- Patch applies **clean** (no `.rej`, no fuzz) into the 19.07 tree's `patches-4.14/`.
+- Patched `mt7620.c`: `FUNC("spi refclk", 0, 37, 1)` + `GRP("spi refclk", …)` (name unchanged).
+- Compiled `image-Tessel.dtb`: `spi@b40` `status="okay"`, `pinctrl-0` → the `"spi refclk"`
+  pingroup; child `spidev@0 compatible="spidev" reg=<0x0>`; alias `spi1 → spi@b40`.
+- `world` build **exit 0**. DIAG artifact:
+  `build/openwrt-incremental/output/tessel-19.07-DIAG.bin`
+  (copy of `openwrt-ramips-mt7620-tessel-squashfs-sysupgrade-DIAG.bin`, 3.8 MB;
+  sha256 `E47AC2775C55312D65C2F5B78E3881098EC161CF99142B21AAA0C6968E2BA87D`).
+
+**Status: built + build-source-verified; awaiting hardware flash/verify.** Flash with
+`T2_FORCE_FLASH=1` (source 18.06 reports `board_name=generic`, so force is required — §12.3).
+Success gate = §11.5 (`/dev/spidev1.0`, `spid` up no error/crash, steady POWER LED, then
+`t2-cli list --usb` → `USB␉OpenWrt`). The 21.02 pivot stays parked until 19.07 is
+hardware-validated.
+
 
 ### 12.3 Flash gate found: cross-version sysupgrade board_name/supported_devices mismatch
 The first 18.06 flash attempt exposed a **flashing-procedure** blocker *before* the CS1 fix
@@ -577,6 +621,18 @@ could even be tested (the image never boots, so this is orthogonal to the DTS/pi
 - **Why only now:** this metadata compat check exists in 17.01+ but **not in 15.05**, which
   is exactly why factory(15.05)→17.01 flashed clean and 17.01→18.06 refuses. It will recur
   on **every** hop from 17.01 upward.
+- **Exact source mechanism (confirmed in the k4.14 tree):** on ramips, `/tmp/sysinfo/board_name`
+  is written by `ramips_board_detect()` in `target/linux/ramips/base-files/lib/ramips.sh`,
+  which sets `$name` from a `case "$machine"` over the DTS `model` string. **There is no
+  "Tessel 2" case**, so `$name` stays empty, the function `return`s early *without writing*
+  `/tmp/sysinfo/board_name`, and `board_name()` (`package/base-files/.../functions.sh:351`)
+  falls back to the literal `"generic"`. Meanwhile `Device/tessel` (`image/mt7620.mk`) sets
+  **no `SUPPORTED_DEVICES`**, so it defaults to the profile name `tessel`. Net: every one of
+  17.01/18.06/19.07 self-reports `board_name = "generic"` while every image advertises
+  `["tessel"]`. **⇒ Baking a `board_name = "tessel"` fix into a NEW image does not remove the
+  force for the hop that flashes *onto* it, because the *running source* system still reports
+  `"generic"`.** (e.g. 18.06→19.07 needs force because the running 18.06 says "generic",
+  regardless of what the 19.07 image self-reports.)
 - t2-cli invokes `sysupgrade -n` with **no force** (`lib/tessel/commands.js:145`,
   `lib/tessel/update.js:81-88`) → no built-in override.
 
@@ -586,21 +642,31 @@ submodules):** an opt-in, env-gated force in `lib/tessel/update.js` — when
 `T2_RESTORE_URL` convention; default behaviour unchanged). Forcing is **safe here**: the
 image is the correct `ramips/mt7620` tessel build; only the cosmetic
 `board_name`/`supported_devices` mismatch trips the check, and restore recovery remains
-available.
+available. **Validated on hardware:** `T2_FORCE_FLASH=1` wrote 18.06 for real (device
+booted `OpenWrt 18.06.9`, hostname flipped LEDE→OpenWrt).
 
-**Two candidate PERMANENT fixes (to weigh):**
+**Candidate PERMANENT fixes (to weigh) — force stays required for in-flight hops regardless:**
 - **(a) A proper t2-cli `--force-flash` CLI flag** (instead of the env var) — a clean,
   discoverable override for the whole hop series. Belongs in t2-cli, not the image.
-- **(b) Set the Tessel `board_name` via `/etc/board.d` in the build overlay** so images
-  self-identify as `"tessel"` (cleaner long-term; also lets `board_name`-keyed config land
-  correctly). **Caveat:** it does **not** help flashing *from* an already-`"generic"` system
-  (17.01), so a force is still required for the current hop and any hop whose *source* image
-  predates the board.d fix. Net: (b) is the right long-term hygiene fix **for images we
-  build going forward**, but (a)/force is what actually unblocks the in-flight hops.
+- **(b) Make images self-ID as `"tessel"`** — the *correct* lever is **not** `/etc/board.d`
+  (those scripts consume `board_name`, they don't set it) but either a **`case` for
+  `"Tessel 2"` added to `ramips_board_detect()`** (brittle: patches a huge upstream file) or,
+  cleaner for the overlay, a **small preinit hook** that writes `tessel` to
+  `/tmp/sysinfo/board_name` (and set `SUPPORTED_DEVICES := tessel` explicitly). **Caveat
+  (now proven at source):** this only affects the *running* system once such an image is
+  installed, so it can never remove the force for a hop whose *source* image predates it.
+- **(c) Pragmatic chain-wide unblock: `SUPPORTED_DEVICES := tessel generic`** on
+  `Device/tessel`. This makes every built image *accept* a running `board_name` of either
+  `tessel` **or** `generic`, so **no force is needed on any hop** (all current releases report
+  `generic`). Semantically loose (`generic` is a broad token) but effective; low-risk in our
+  single-hardware context.
 
-**Recommendation:** keep the `T2_FORCE_FLASH` env force as the operational unblock for the
-hop series now; adopt **(b)** in the overlay so every image we build from here on self-IDs
-as `tessel` (harmless, removes the mismatch for future *source* systems), and optionally
-promote the env force to a real `--force-flash` flag **(a)** if this graduates beyond the
-uplift. **Status: parent re-flashing 18.06 with `T2_FORCE_FLASH=1` to get the boot + CS1
-verdict; overlay board.d change held until 18.06 is confirmed booting.**
+**Recommendation / decision:** keep `T2_FORCE_FLASH` as the operational unblock for the
+mechanical series now (proven safe, and required for 18.06→19.07 anyway since the source
+reports `generic`). **Do not entangle a `board_name`/`SUPPORTED_DEVICES` change into a
+per-hop DIAG build** — that would add an untested delta to an otherwise single-delta hop and
+muddy its hardware verdict. Fold the permanent fix (prefer **(c)** for a clean chain-wide
+force-free result, optionally plus **(b)** for correct self-ID) into an **isolated rebuild**
+after the mechanical series, at/around the 21.02 pivot. **Status: 18.06 flashed & booted via
+force and fully hardware-validated (§12.2); 19.07 built the same way (§13); board_name fix
+deferred to the pivot rebuild.**
