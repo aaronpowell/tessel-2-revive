@@ -143,9 +143,12 @@ was only discovered once we got a shell on real 17.01 hardware — see §11):
 1. **Cosmetic / mechanical:** the **SPI bus number** — the hard-coded
    `/dev/spidev32766.1` no longer resolves. Handled by making `spid-start` autodetect
    whatever `/dev/spidev*` node exists (now `/dev/spidev1.0`, see §11).
-2. **First break needing a DTS change:** the **spidev whitelist** — *warns* at
-   **19.07 (k4.14)**, becomes *hard* by **21.02 (k5.4)**. Requires a whitelisted
-   `compatible` in the DTS.
+2. **First break needing a DTS change:** the **spidev whitelist** — the `spidev.c`
+   "buggy DT: spidev listed directly in DT" `WARN()` **already fires at 17.01 (k4.4)**
+   (confirmed on hardware, §11.6) but is **warn-but-continue** — the node is still created
+   and works. It stays non-fatal through **19.07 (k4.14)** and becomes a **hard refusal by
+   21.02 (k5.4)** (the WARN turns into "no node created" unless a whitelisted `compatible`,
+   e.g. `rohm,dh2228fv`, is used). Requires a whitelisted `compatible` in the DTS from 21.02.
 3. **Deepest break — forces new code (the real cause of the 24.10 failure):**
    **sysfs-GPIO → libgpiod**. Begins at **21.02** (base renumber + not default), and
    is **unavoidable by 24.10 (k6.6)** once sysfs GPIO is gone.
@@ -373,8 +376,9 @@ console will show it. The kernel is already configured for it (DTS
 
 ## 11. Hop 1 (17.01) — the CS1 SPI-registration break, root cause + fix
 
-**Status: Linux boots fine; break localized to the coprocessor SPI device; CS1 fix built
-into a new DIAG image — pending hardware re-verify.**
+**Status: FIXED and HARDWARE-VALIDATED (SSH gate). Coprocessor SPI device now registers on
+real hardware; spid bridge is up and stable. Only the final USB t2-cli-connect check is
+outstanding (blocked on host-side USB flakiness, not the image).**
 
 ### 11.1 What the Wi-Fi-AP shell proved
 The `-n` clean-config DIAG image brought up the `Tessel-Diag` AP and a working SSH shell.
@@ -457,3 +461,39 @@ t2-cli can't connect.
 
 If all pass, hop 1 (17.01) is validated on hardware and the incremental method is proven —
 only then does the **21.02 (k5.4)** pivot (spidev whitelist + libgpiod) begin.
+
+### 11.6 Hardware validation RESULT (SSH gate — PASSED)
+The CS1-fixed DIAG image was flashed with `-n` and inspected over the `Tessel-Diag`
+Wi-Fi/SSH shell on real hardware. **The SSH gate passes** (2 of 3 gate items definitively
+confirmed; the 3rd — USB t2-cli connect — is outstanding only due to host-side USB flakiness):
+
+```
+# ls -l /dev/spidev*
+crw-------  1 root root  153, 0  /dev/spidev1.0        ← node EXISTS (coprocessor on &spi1/CS0)
+# logread | grep -i spid
+spid[712]: Starting                                    ← bridge up; NO "Error opening SPI device"; NO crash loop
+# dmesg | grep -i spi
+spi spi1.0: force spi mode3                            ← CS registers cleanly
+#   (the old fatal "spi_device register error /…/spidev@1" is GONE)
+```
+
+- **`/dev/spidev1.0` present + `spid` up and stable** → the DTS move to `&spi1` and the
+  pin-37-only `spi_cs1` pinmux patch are **correct and sufficient at 17.01/k4.4**. The CS1
+  break is fixed on hardware, not just at build time.
+- **Residual, non-fatal:** `spidev spi1.0: buggy DT: spidev listed directly in DT` +
+  a `spidev.c:720` `WARN()` stack. This is a **warn-but-continue** — the node is still
+  created (proven: `/dev/spidev1.0` exists and `spid` opened it). This is exactly the
+  **k4.x "warns-but-works" stage** of the spidev-whitelist deviation (§1.2 / §4 stage 2);
+  the **hard refusal** only arrives at k5.x, i.e. the **21.02** pivot. **Nothing to fix at
+  17.01.**
+- **LED/pin-38:** the pinmux trim frees pin 38 (user2 LED), so POWER is expected to go
+  **steady**. Visual confirmation still pending from the bench.
+- **Outstanding:** the final gate item — `t2-cli list`/`version --usb` connecting over USB —
+  is not yet confirmed. It is blocked purely by **host-side USB flakiness**
+  (`LIBUSB_TRANSFER_STALL` recurred on flash-discovery/restore this session; cured by a
+  fresh power-cycle + a different direct USB port/cable, after which restore and the DIAG
+  flash both succeeded). The USB-connect test will be re-run on a clean endpoint.
+
+**⇒ Hop 1 is functionally validated at the bridge level; awaiting only the USB t2-cli
+handshake before the all-clear. Stay parked at 19.07 — do NOT start the 21.02 pivot until
+t2-cli-over-USB on hop 1 is confirmed.**
