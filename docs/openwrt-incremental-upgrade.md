@@ -102,7 +102,7 @@ incrementally.
 |----:|---------|:------:|----------------------|:------:|--------|
 | 0 | 15.05 "Chaos Calmer" (baseline) | 3.18 | — all three legacy paths work | ✅ | — |
 | 1 | 17.01 "Reboot" | 4.4 | **Coprocessor CS1 SPI device fails to register** (factory `spidev@1`/CS1-on-`spi@b00` idiom invalid on the in-tree single-CS driver) + SPI bus renumber | ✅ **VALIDATED** *(DTS → `&spi1` + pin-37 `spi_cs1` pinmux patch; see §11)* | **real (bounded) DTS/pinmux fix** — not purely mechanical |
-| 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created) | ✅ | mechanical |
+| 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ *(CS1-fixed DIAG built; HW-pending)* | mechanical + trivial 1-line pinmux port |
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created) | ✅ *(monitor)* | mechanical — **last easy hop** |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ⚠️ | medium |
@@ -507,3 +507,44 @@ hardware-validate 18.06/19.07 first (both built, predicted mechanical) or go str
 > direct USB port/cable, then exactly one clean t2-cli op** — each stalled/killed op halts
 > the data endpoint until the next power-cycle. Captured in
 > `build/openwrt-incremental/FLASH-AND-VALIDATE.md` so future hops don't repeat the thrash.
+
+## 12. Hop 2 (18.06) — CS1 fix ported to kernel 4.14, DIAG image built (hardware-pending)
+
+Per the parent's door-(a) decision, hop 2 (18.06) is being hardware-validated before
+hop 3. The §9 build of 18.06 predated the CS1 fix, so 18.06 was **rebuilt** with the
+CS1 fix (the same `&spi1`/`spidev@0` DTS + a **kernel-4.14** pinmux patch) plus
+`TESSEL_DIAG=1` (Wi-Fi-AP `Tessel-Diag`) for the SSH gate.
+
+### 12.1 The 4.14 patch is *simpler* than the 4.4 one — the .dtsi group name differs
+The pinmux lever is per-kernel because the two releases' stock `mt7620n.dtsi` label the
+`&spi1` pin group **differently**:
+
+| Release | Kernel | `spi_cs1` node's `ralink,group` | Patch strategy |
+|--------:|:------:|:-------------------------------:|----------------|
+| 17.01 | 4.4 | `"spi_cs1"` (name absent from stock mt7620.c) | **rename** mt7620.c's `"spi refclk"` → `"spi_cs1"` **and** trim to pin 37 |
+| 18.06 / 19.07 | 4.14 | `"spi refclk"` (the **stock** group name) | **keep** the name `"spi refclk"`, only **trim** its FUNC from 3 pins → pin 37 |
+
+So `patches-4.14/999-tessel-mt7620-spi-cs1.patch` is a **single-line** change:
+`FUNC("spi refclk", 0, 37, 3)` → `FUNC("spi refclk", 0, 37, 1)`. Keeping the group
+**name** unchanged preserves the stock `.dtsi`'s `<&spi_cs1>` → `"spi refclk"` reference,
+while the pin-count trim (a) makes pin 37 the 2nd SPI chip-select via the retained
+`MT7620_GPIO_MODE_SPI_REF_CLK` mode bit and (b) frees pins 38/39 (pin 38 = user2/POWER
+LED), same net effect as the 17.01 fix. The overlay `Tessel.dts` is unchanged
+(release-agnostic: `&spi1 { status="okay"; spidev@0 {…}; }`).
+
+### 12.2 Build-source verification (18.06, kernel 4.14.206) — PASS
+- Patch applies **clean** (no `.rej`, no fuzz) into `patches-4.14/`.
+- Patched `mt7620.c`: `FUNC("spi refclk", 0, 37, 1)` with `GRP("spi refclk", refclk_grp,
+  1, MT7620_GPIO_MODE_SPI_REF_CLK)` (name unchanged — matches the .dtsi).
+- Compiled `tessel-kernel.bin.dtb`: `spi@b40` `status="okay"`, child `spidev@0
+  compatible="spidev" reg=<0x0>`, alias `spi1 → /palmbus@10000000/spi@b40`, and
+  `&spi1`'s `pinctrl-0` phandle resolves to the `spi1` pingroup with
+  `ralink,group = "spi refclk"` (i.e. the trimmed, pin-37-only group).
+- `world` build **exit 0**. DIAG artifact:
+  `build/openwrt-incremental/output/tessel-18.06-DIAG.bin` (copy of
+  `openwrt-ramips-mt7620-tessel-squashfs-sysupgrade-DIAG.bin`, 3.6 MB).
+
+This mirrors the hardware-validated 17.01 chain exactly, so `/dev/spidev1.0` and a steady
+POWER LED are the expected runtime result. **Status: built + build-source-verified;
+awaiting hardware flash/verify.** Success gate = §11.5 (`/dev/spidev1.0` present, `spid`
+up with no error/crash, steady POWER LED, then `t2-cli list --usb` → `USB␉…`).

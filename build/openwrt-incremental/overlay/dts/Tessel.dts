@@ -88,8 +88,10 @@
  * re-expressed the MT7620's second chip-select as a *separate* SPI controller,
  * spi1: spi@b40 (bus 1), arbitrated against spi0 via the shared SPI arbiter.
  * The in-tree spi-rt2880 driver (bus_num==1 => SPI1_POR | ARB_EN) already drives
- * it; it just needs enabling plus the pin-37 "spi_cs1" pinmux
- * (see patches/ramips/patches-4.4/999-tessel-mt7620-spi-cs1.patch).
+ * it; it just needs enabling plus a pin-37-only SPI-CS1 pinmux, supplied by the
+ * per-kernel patch patches/ramips/patches-<kver>/999-tessel-mt7620-spi-cs1.patch
+ * (k4.4 renames the group to "spi_cs1"; k4.14 keeps the stock "spi refclk" name
+ * and only trims it to pin 37 -- the .dtsi group reference differs per release).
  *
  * NOTE: `compatible = "spidev"` still binds on 17.01 (k4.4). From ~21.02 (k5.4)
  * this must become a whitelisted compatible (e.g. "rohm,dh2228fv"). Tracked in
