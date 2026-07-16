@@ -933,3 +933,24 @@ carries **both** `ralink,group`/`ralink,function` **and** `groups`/`function` = 
 (`pgrep -l spid`/`usbexecd` present), the coprocessor pins export cleanly
 (`echo 2 > /sys/class/gpio/export` succeeds; no `pin 2 is not set to gpio mux`), and
 host `t2 list --usb` → `USB␉OpenWrt`.
+
+### 14.4 Hop 4 (21.02) HARDWARE VALIDATION RESULT — PASS ✅ (new validated baseline)
+
+Reflashed `9FC9F565…`; clean USB serial-console capture after a power-cycle. **All gate items pass —
+the dual-binding pinmux fix closes probe (2).**
+
+- **Pinmux (the decisive check — was `MUX UNCLAIMED` pre-fix):** `/sys/kernel/debug/pinctrl/pinctrl-rt2880-pinmux/pinmux-pins`:
+  - `pin 1 (io1): pinctrl pio:1 function gpio group i2c`
+  - `pin 2 (io2): pinctrl pio:2 function gpio group i2c`
+  → io1(SYNC)/io2(IRQ) now muxed to `gpio`; the k5.4 generic parser is reading our `groups`/`function` twins. (The `pinmux-selections` debugfs node doesn't exist on this build, but `pinmux-pins` is decisive.)
+- **spid bridge up:** `pgrep -l spid` → `1500 spid` (steady); `pgrep -l usbexecd` → `1560 usbexecd`. `logread`: a single `spid[1500]: Starting`, **no** `GPIO export write: Invalid argument`, **no** procd restart storm. A manual `echo 1/2 > /sys/class/gpio/export` now returns **EBUSY** ("Resource busy" — spid already claimed the pins), not the old EINVAL.
+- **env:** uname `5.4.238`, OpenWrt `21.02.7 r16847`; solid blue POWER LED (pin-38 freed); `wlan0` up + forwarding. Expected non-fatal `spidev buggy DT` warn only (whitelist DEFER confirmed).
+- **host end-to-end:** `t2 list --usb` → `USB␉OpenWrt`. ✅
+
+**Net for Hop 4:** the entire 21.02/k5.4 pivot reduced to **two** bridge-critical deltas over validated
+19.07 — (1) the CS1 pin-37 patch ported to `patches-5.4` (mechanical, as every hop), and (2) **one**
+dual-spelled `i2c`→`gpio` pinmux mux in `state_default` — plus two non-bridge harness fixes (container
+`python3`; the ramips image-recipe convention rewrite). The two "big pivot" items (spidev whitelist,
+libgpiod GPIO port) are **provably not needed at 5.4** and stay deferred to whichever later hop actually
+hard-refuses `compatible="spidev"` or drops `CONFIG_GPIO_SYSFS`. **21.02.7 is the new validated
+baseline** (hop chain 17.01 ✓ / 18.06 ✓ / 19.07 ✓ / 21.02 ✓). Next: Hop 5 → 22.03 (k5.10).
