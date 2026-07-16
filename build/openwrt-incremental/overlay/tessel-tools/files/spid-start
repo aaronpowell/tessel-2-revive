@@ -10,7 +10,25 @@ mkdir -p /var/run/tessel
 ln -sf /var/run/tessel/1 /var/run/tessel/port_a
 ln -sf /var/run/tessel/2 /var/run/tessel/port_b
 
-SPIDEV="$(ls /dev/spidev* 2>/dev/null | head -n1)"
+# Wait for the spidev node to appear before launching spid.
+#
+# From 22.03 (kernel 5.10) onward spidev is built as a LOADABLE MODULE, which the
+# kernel auto-loads ~13s into boot — AFTER this START=60 procd service first runs.
+# Without a wait, spid-start finds no /dev/spidev* yet, falls back to a node that
+# doesn't exist, and `spid` exits immediately; procd respawns it a few times, hits
+# the respawn throttle, and GIVES UP PERMANENTLY before the module ever loads
+# (symptom: POWER LED blinks forever, pgrep spid/usbexecd empty, but a manual
+# `/etc/init.d/spid start` later works fine). At <=21.02 spidev was built-in and
+# present at boot, so the loop below passes on the first iteration — this is
+# all-hop-safe and deterministic (preferred over bumping procd respawn retries).
+SPIDEV=""
+i=0
+while [ $i -lt 30 ]; do
+    SPIDEV="$(ls /dev/spidev* 2>/dev/null | head -n1)"
+    [ -n "$SPIDEV" ] && break
+    sleep 1
+    i=$((i + 1))
+done
 [ -z "$SPIDEV" ] && SPIDEV=/dev/spidev1.0
 
 # IRQ GPIO = 2, SYNC GPIO = 1 (global sysfs numbers; valid while gpiochip base is 0).

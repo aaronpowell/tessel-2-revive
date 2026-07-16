@@ -996,6 +996,30 @@ spidev. **Hardware gate for 22.03:** boot 22.03.x/5.10; firmware splits (mtd4/5/
 `/dev/spidev1.0` enumerates (probe 1); spid up over sysfs GPIO, no crash-loop (probe 2);
 host `t2 list --usb` → `USB␉OpenWrt`.
 
+### 15.3 Hardware finding: spid boot-ordering race (a runtime property, not a source diff)
+
+22.03 boots and the bridge works — but on the **first** attempt spid did **not come up at
+boot** (POWER LED blinking, `pgrep spid`/`usbexecd` empty), even though `/etc/init.d/spid
+start` run by hand later worked perfectly (steady POWER, `t2 list --usb` → `USB␉OpenWrt`).
+This is a **boot-timing race the source scan could not see**:
+
+- At ≤21.02 the mt7620 kernel built **spidev built-in**, so `/dev/spidev1.0` exists before
+  our `spid` service runs. At **22.03 (k5.10) spidev became a loadable module** (`spidev(+)`),
+  auto-loaded ~13 s into boot (matching the `spidev.c:750` "buggy DT" WARN timestamp).
+- Our overlay `spid-start` is a `START=60` + `USE_PROCD` + `respawn` service that did
+  `SPIDEV="$(ls /dev/spidev* | head -n1)"` with **no wait**. At boot it runs *before* t≈13 s,
+  finds no node, falls back to `/dev/spidev1.0` (not yet present), `spid` fails to open it and
+  exits; procd respawns it a few times, hits the **respawn throttle (~5 fails), and gives up
+  permanently** — before the module ever loads.
+
+**Fix (all-hop-safe, in `overlay/tessel-tools/files/spid-start`):** a bounded wait-loop
+(`for i in 0..29: SPIDEV=$(ls /dev/spidev* ...); [ -n ] && break; sleep 1`) before `exec spid`,
+falling back to `/dev/spidev1.0` after 30 s. At ≤21.02 (built-in spidev) it passes on iteration 0;
+at 22.03+ it waits the ~13 s. Preferred over bumping procd respawn retries — deterministic and
+doesn't spam failed launches. **Carries forward unchanged** to 23.05/24.10/25.12 (spidev stays a
+module). **Re-validation gate:** spid up **AT BOOT** with no manual start — steady POWER,
+`pgrep spid`+`usbexecd` steady, `t2 list --usb` → `USB␉OpenWrt`.
+
 ---
 
 ## 16. Hop 6 (23.05, kernel 5.15) — the deferred spidev whitelist break FINALLY fires
@@ -1043,12 +1067,14 @@ The 23.05/k5.15 hop reduces to **two isolated, pre-scoped deltas over validated 
    `drivers/pinctrl/ralink/pinctrl-mt7620.c` (`ralink_pmx_func` type), same pin-37 trim.
 
 Everything else — pinmux dual-binding, mtdsplit injection, image-recipe convention,
-`GPIO_SYSFS`, swconfig — is inherited unchanged. **libgpiod remains deferred to the k6.6
+`GPIO_SYSFS`, swconfig, **and the 22.03 spid-start boot-race wait-loop (§15.3)** — is
+inherited unchanged (spidev stays a loadable module at 5.15, so the wait-loop is still
+required). **libgpiod remains deferred to the k6.6
 hop** (24.10/25.12), where `CONFIG_GPIO_SYSFS` is finally dropped. **Hardware gate for
 23.05:** boot 23.05.x/5.15; firmware splits (mtd4/5/6); **`/dev/spidev1.0` REAPPEARS**
 (the decisive check — with the compat fix the node is created again; the bare `"spidev"`
-would have been absent) with **no** `spidev … not supported` dmesg error; spid up over
-sysfs GPIO, no crash-loop; host `t2 list --usb` → `USB␉OpenWrt`.
+would have been absent) with **no** `spidev … not supported` dmesg error; spid up **at boot**
+over sysfs GPIO, no crash-loop; host `t2 list --usb` → `USB␉OpenWrt`.
 
 ### 16.4 Third delta (build harness, not device): host gcc 8 required
 
