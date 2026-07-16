@@ -106,7 +106,7 @@ incrementally.
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ✅ **DIAG BUILT** *(hardware-pending; §15)* | mechanical (1 patch) |
-| 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; sysfs GPIO still default | 🔧 **DIAG BUILDING** *(2 isolated deltas; §16)* | 2 deltas (1 real + 1 mechanical) |
+| 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; host gcc 8 required; sysfs GPIO still default | ✅ **DIAG BUILT** *(3 deltas; §16; hardware-pending)* | 3 deltas (1 real + 2 mechanical) |
 | 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⚠️ | validates the port |
 | 8 | **25.12 (END)** | 6.6 | new end target — **only OpenWrt branch still receiving CVE fixes** in mid-2026 (22.03 EOL Apr-2024, 23.05 EOL Aug-2025, 24.10 EOLs Sep-5-2026) | ⛔ | final validation |
 
