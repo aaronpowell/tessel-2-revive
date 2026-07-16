@@ -38,6 +38,21 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && gcc --version | head -1 && g++ --version | head -1
 
+# OpenWrt 24.10 (k6.6) host prereq: requires Python >= 3.7, but 18.04 ships 3.6.9
+# as the default python3. 24.10's include/prereq-build.mk SetupHostCommand probes
+# candidate interpreters BY VERSIONED NAME (python3.7 .. python3.12) and symlinks
+# the first one it finds into staging_dir/host/bin/python3, so we only need
+# python3.7 to EXIST by name — we deliberately do NOT repoint the default
+# python/python3. That keeps python2-as-`python` and python3.6 intact for the
+# already-validated <=19.07 hops (which expect them), while 24.10+ transparently
+# picks up python3.7. bionic universe ships python3.7 (3.7.5); python3.7-distutils
+# satisfies the prereq's distutils/stdlib checks (run via staging_dir/host/bin).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3.7 python3.7-dev python3.7-distutils \
+ && rm -rf /var/lib/apt/lists/* \
+ && python3.7 --version
+
 COPY build.sh /usr/local/bin/build.sh
 COPY overlay /overlay
 RUN chmod +x /usr/local/bin/build.sh

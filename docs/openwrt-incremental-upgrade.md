@@ -106,8 +106,8 @@ incrementally.
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin; **NEW: spid boot-race** (spidev became a loadable module) → `spid-start` wait-loop (§15.3) | ✅ **HARDWARE-VALIDATED** (`23f13fe`; DIAG `D6E4FFD5…`) | mechanical (1 patch) + 1 all-hop boot-race fix |
-| 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; host gcc 8 required; sysfs GPIO still default | ✅ **DIAG BUILT** *(3 deltas; §16; hardware-pending)* | 3 deltas (1 real + 2 mechanical) |
-| 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⚠️ | validates the port |
+| 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; host gcc 8 required; sysfs GPIO still default | ✅ **HARDWARE-VALIDATED** (`23f13fe`; DIAG `9331B38C…`) — `/dev/spidev1.0` reappeared via `rohm,dh2228fv`; spid up at boot | 3 deltas (1 real + 2 mechanical) |
+| 7 | 24.10 | 6.6 | **PREDICTED break did NOT fire: `CONFIG_GPIO_SYSFS=y` still default at k6.6 → sysfs GPIO survives, libgpiod NOT needed**; all prior fixes carry (spidev whitelist auto-fires via version-gate, CS1 re-pathed to `drivers/pinctrl/mediatek/`); host prereq → Python ≥3.7 (see §17) | ✅ **DIAG BUILT** *(§17; hardware-pending; DIAG `552791AD…`)* | mechanical (deltas all carry-forward) |
 | 8 | **25.12 (END)** | 6.6 | new end target — **only OpenWrt branch still receiving CVE fixes** in mid-2026 (22.03 EOL Apr-2024, 23.05 EOL Aug-2025, 24.10 EOLs Sep-5-2026) | ⛔ | final validation |
 
 > Kernel↔release mapping per the [OpenWrt version table](https://openwrt.org/releases/table);
@@ -1122,3 +1122,91 @@ bump" milestone the roadmap predicted for the upper hops (note it likely recurs 
 k6.6/24.10, which may want an even newer host gcc). After changing the Dockerfile,
 the stale `build_dir/host` + `staging_dir/host` from the gcc-7 attempt must be
 removed so the cached "compiler cannot create executables" result is discarded.
+
+
+## 17. Hop 7 (24.10, kernel 6.6) — the PREDICTED libgpiod break did NOT fire; a mechanical hop
+
+23.05.6 (k5.15) hardware-validated. 24.10 jumps to **kernel 6.6** (tag `v24.10.0` =
+linux **6.6.73**). The roadmap flagged this hop (row 7) as the big one: *"sysfs GPIO
+gone → libgpiod mandatory."* **Source scoping proved that premise FALSE.** The result
+is that 24.10 is a **mechanical, carry-forward-only hop** — no new device delta at all;
+the only new work is a host-side build prerequisite.
+
+### 17.1 The headline finding — `CONFIG_GPIO_SYSFS=y` survives at k6.6, so libgpiod is NOT needed
+
+`config GPIO_SYSFS` still exists in linux **6.6.73** `drivers/gpio/Kconfig` (marked
+deprecated, but NOT removed), and OpenWrt keeps it enabled by default:
+`generic/config-6.6` sets **`CONFIG_GPIO_SYSFS=y`**. Verified in the merged kernel
+`.config` of the built image. So `spid`'s legacy `/sys/class/gpio` export path (global
+GPIO numbers 2 and 1, gpiochip base 0) works **unchanged** — exactly as at 21.02/22.03/
+23.05. The long-deferred libgpiod / gpio-chardev port is **not required at 24.10, and
+(since 25.12 is also k6.6) not required through the end target either.** The whole
+"libgpiod port" line item that hung over the roadmap since 21.02 is now closed as
+*never needed*.
+
+> Note: `CONFIG_GPIO_CDEV=y` is also set at 6.6 (the modern chardev interface is
+> present), but that is additive — sysfs coexists with it, and `spid` uses sysfs. No
+> behavioural change for the bridge.
+
+**Why the parent's original full-jump 24.10 attempt still failed:** it was never a
+single libgpiod problem — it was the *stack* of every break this method localized one
+at a time (spidev whitelist hard-refuse → no `/dev/spidev1.0`; the spid boot-race;
+CS1 non-registration; the k5.4 pinmux mux). All are already fixed in the overlay, so
+they simply carry forward here.
+
+### 17.2 Everything else is carry-forward (verified in the built image)
+
+- **spidev whitelist** — `spidev.c` `spidev_of_check()` still `-EINVAL`s a literal
+  `compatible="spidev"` at 6.6.73, and `spidev_dt_ids` still lists `rohm,dh2228fv`. The
+  harness's version-gated compat rewrite (fires for kmaj*1000+kmin ≥ 5015) auto-applies
+  at 6.6 — **no new delta**. Built DTB confirms coprocessor `spidev@0` →
+  `compatible = "rohm,dh2228fv"` (node name unchanged → `/dev/spidev1.0`).
+- **CS1 pin-37 patch — re-path #3.** The ralink pinctrl dir is gone at 6.6; the driver
+  moved to `drivers/pinctrl/mediatek/pinctrl-mt7620.c` and the struct renamed
+  `ralink_pmx_func` → `mtmips_pmx_func`. `refclk_grp` context is otherwise byte-identical
+  (`FUNC("spi refclk", 0, 37, 3)`). New patch lives in `overlay/patches/ramips/patches-6.6/`
+  (build.sh maps `v24.10.*|v25.12.* → patches-6.6`). Built source confirms
+  `FUNC("spi refclk", 0, 37, 1)` — applied clean, zero kernel `.rej`. Config:
+  `CONFIG_PINCTRL_MT7620=y` (the `PINCTRL_RALINK` symbol was renamed `PINCTRL_MTK_MTMIPS`).
+- **dual-binding `state_default` pinmux (81710cc)** — DTB confirms both `ralink,group`/
+  `ralink,function` AND `groups`/`function="gpio"` on the i2c-group mux. Carries unchanged.
+- **bare `label="firmware"` partition** — DTB confirms bare (no `compatible`).
+- **`CONFIG_MTD_SPLIT_FIRMWARE=y`** — still absent from the mt7620 defconfig at 6.6, so the
+  harness injects it into `config-6.6` (same as 19.07/22.03/23.05). Confirmed `=y` in the
+  merged `.config`.
+- **spid-start wait-loop** — spidev is still a loadable module at 6.6, so the validated
+  bounded wait-loop is required and is baked into the rootfs unchanged (all-hop-safe).
+- **switch: no DSA migration** — mt7620 is still `CONFIG_SWCONFIG=y` at 24.10 (DSA never
+  reached this SoC). No delta.
+
+### 17.3 The ONE new delta this hop — a host build prerequisite (Python ≥ 3.7)
+
+OpenWrt 24.10's `include/prereq-build.mk` requires **Python ≥ 3.7**; the harness base
+image (ubuntu:18.04) ships python3 = **3.6.9**, so `prepare` failed the host-prereq
+check. Crucially, `prereq-build.mk`'s `SetupHostCommand(python3,…)` probes candidate
+interpreters **by versioned name** (`python3.12` down to `python3.7`) and symlinks the
+first found into `staging_dir/host/bin/python3` — so the fix is simply to make a
+`python3.7` binary *exist by name*, not to repoint the system default. The Dockerfile
+now installs `python3.7 python3.7-dev python3.7-distutils` from the bionic universe repo
+**alongside** the existing python2/python3.6 (which the ≤19.07 hops still use). This is a
+container-only change — no device/image impact. After the Dockerfile edit, the stale
+`build_dir/host` + `staging_dir/host` (which cached the failed prereq result) must be
+removed before re-running `prepare`.
+
+### 17.4 Build proofs (image `552791AD…`, 6,095,660 bytes)
+
+- kernel **6.6.73**; `prepare` host-prereq PASSES (`python`/`python3` → updated,
+  distutils/stdlib → ok).
+- merged `.config`: `CONFIG_GPIO_SYSFS=y` ✓, `CONFIG_MTD_SPLIT_FIRMWARE=y` ✓,
+  `CONFIG_PINCTRL_MT7620=y` ✓.
+- built `pinctrl-mt7620.c`: `FUNC("spi refclk", 0, 37, 1)` ✓ (CS1 applied clean, no kernel `.rej`).
+- DTB: coprocessor `spidev@0` `compatible="rohm,dh2228fv"` ✓; firmware partition bare ✓;
+  `state_default` dual-binding ✓.
+- rootfs `spid-start`: wait-loop present ✓.
+- artifact: `output/tessel-24.10-DIAG.bin`, sha256
+  `552791AD3778EF3482F239B27D094A2C3B2C82ADBBAC5A620E672CB2734523BF`.
+
+**Hardware gate (pending parent flash):** boot 24.10/6.6.73, `/proc/mtd` firmware splits,
+`/dev/spidev1.0` present, `spid`+`usbexecd` steady AT BOOT (no manual start),
+`t2 list --usb` → `USB␉OpenWrt`. A clean bridge boot here **directly proves libgpiod was
+never needed** — the biggest de-risking result of the whole incremental method.

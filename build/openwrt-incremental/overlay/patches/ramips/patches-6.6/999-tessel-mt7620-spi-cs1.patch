@@ -1,0 +1,35 @@
+Tessel 2: trim the mt7620 "spi refclk" pinmux group to pin 37 only (k6.6).
+
+The Tessel coprocessor (SAMD21) sits on the MT7620's second SPI chip-select, which
+upstream OpenWrt models as a separate controller spi1: spi@b40 (bus 1). Its pinctrl
+references the pin group the .dtsi labels `spi_cs1`, which maps to the stock
+"spi refclk" group -- same hardware mode bit as every prior hop.
+
+IMPORTANT DELTA vs the patches-5.15 version (RE-PATH #3): at kernel 6.6 the ramips
+pinmux driver was migrated upstream OUT of drivers/pinctrl/ralink/ and INTO
+drivers/pinctrl/mediatek/pinctrl-mt7620.c (the ralink pinctrl dir was removed;
+OpenWrt now selects CONFIG_PINCTRL_MT7620=y + CONFIG_PINCTRL_MTK_MTMIPS=y, the
+renamed PINCTRL_RALINK). The struct type was also renamed ralink_pmx_func ->
+mtmips_pmx_func. The `refclk_grp` definition is otherwise byte-identical:
+    static struct mtmips_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };
+so this is the same 37,3 -> 37,1 trim as every prior hop, only the file and struct
+type differ. Located by context (patch tolerates the offset), so it applies after
+OpenWrt's own pinctrl-mtmips patches.
+
+Stock "spi refclk" spans pins 37, 38, 39 -- enabling &spi1 with that 3-pin group
+works for CS1 but steals pin 38, which Tessel wires to the user2 (blue) LED (leds-gpio
+probe fails with -2, "pin 38 is not set to gpio mux"). Trimming the group to pin 37
+only keeps the same hardware mode bit (MT7620_GPIO_MODE_SPI_REF_CLK, which makes pin
+37 the 2nd SPI chip select) while freeing pins 38/39 for GPIO/LED -- fixing the LED
+while keeping CS1.
+--- a/drivers/pinctrl/mediatek/pinctrl-mt7620.c
++++ b/drivers/pinctrl/mediatek/pinctrl-mt7620.c
+@@ -60,7 +60,7 @@ static struct mtmips_pmx_func mdio_grp[] = {
+ 	FUNC("refclk", MT7620_GPIO_MODE_MDIO_REFCLK, 22, 2),
+ };
+ static struct mtmips_pmx_func rgmii1_grp[] = { FUNC("rgmii1", 0, 24, 12) };
+-static struct mtmips_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };
++static struct mtmips_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 1) };
+ static struct mtmips_pmx_func ephy_grp[] = { FUNC("ephy", 0, 40, 5) };
+ static struct mtmips_pmx_func rgmii2_grp[] = { FUNC("rgmii2", 0, 60, 12) };
+ static struct mtmips_pmx_func wled_grp[] = { FUNC("wled", 0, 72, 1) };
