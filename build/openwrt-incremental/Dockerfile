@@ -19,6 +19,25 @@ RUN apt-get update \
 
 WORKDIR /work
 
+# OpenWrt 23.05 (k5.15) toolchain bump: the bundled host tools (GNU M4 1.4.19,
+# etc.) configure with `-std=gnu17`, which Ubuntu 18.04's default gcc 7.5 rejects
+# ("C compiler cannot create executables" building tools/m4). gcc 8 is the first
+# release to support c17/gnu17. Install gcc-8/g++-8 (available in the bionic
+# archive) and make them the default host compiler via update-alternatives, so
+# host-tool builds from 23.05 onward succeed. We stay on 18.04 (rather than
+# bumping the base) to keep libssl1.0-dev and the exact package set that built
+# the already-validated 17.01–22.03 hops; gcc-8 also builds those fine.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc-8 g++-8 \
+ && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 70 \
+      --slave /usr/bin/g++ g++ /usr/bin/g++-7 \
+ && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 80 \
+      --slave /usr/bin/g++ g++ /usr/bin/g++-8 \
+ && update-alternatives --set gcc /usr/bin/gcc-8 \
+ && ln -sf /usr/bin/gcc /usr/bin/cc \
+ && rm -rf /var/lib/apt/lists/* \
+ && gcc --version | head -1 && g++ --version | head -1
+
 COPY build.sh /usr/local/bin/build.sh
 COPY overlay /overlay
 RUN chmod +x /usr/local/bin/build.sh

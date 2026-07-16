@@ -119,9 +119,15 @@
  * (k4.4 renames the group to "spi_cs1"; k4.14 keeps the stock "spi refclk" name
  * and only trims it to pin 37 -- the .dtsi group reference differs per release).
  *
- * NOTE: `compatible = "spidev"` still binds on 17.01 (k4.4). From ~21.02 (k5.4)
- * this must become a whitelisted compatible (e.g. "rohm,dh2228fv"). Tracked in
- * the uplift roadmap.
+ * NOTE: `compatible = "spidev"` binds unchanged through 22.03 (k5.10) — the
+ * k4.14/5.4/5.10 spidev only WARNs "buggy DT" and still creates /dev/spidevX.Y.
+ * It FIRST HARD-BREAKS at 23.05 (kernel 5.15): spidev_of_check() returns
+ * -EINVAL ("spidev listed directly in DT is not supported") for a literal
+ * "spidev" compatible, so no /dev node is created. From k5.15+ the build
+ * harness (apply_overlay) rewrites this to the whitelisted "rohm,dh2228fv"
+ * (the /dev node name spidevBUS.CS is unchanged, so spid is unaffected). The
+ * rewrite is version-gated because "spidev" anywhere in the list still trips
+ * the 5.15 check and <=k5.10 needs the bare "spidev" to bind via modalias.
  */
 &spi1 {
 	status = "okay";

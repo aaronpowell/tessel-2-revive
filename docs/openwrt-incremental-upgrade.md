@@ -106,7 +106,7 @@ incrementally.
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ✅ **DIAG BUILT** *(hardware-pending; §15)* | mechanical (1 patch) |
-| 6 | 23.05 | 5.15 | stricter spidev; libgpiod effectively mandatory; switch DSA; cmake/toolchain bumps (the `urngd` CRT workaround) | ⚠️ | medium |
+| 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; sysfs GPIO still default | 🔧 **DIAG BUILDING** *(2 isolated deltas; §16)* | 2 deltas (1 real + 1 mechanical) |
 | 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⚠️ | validates the port |
 | 8 | **25.12 (END)** | 6.6 | new end target — **only OpenWrt branch still receiving CVE fixes** in mid-2026 (22.03 EOL Apr-2024, 23.05 EOL Aug-2025, 24.10 EOLs Sep-5-2026) | ⛔ | final validation |
 
@@ -995,3 +995,77 @@ libgpiod) remain provably deferred — 5.10 still ships `CONFIG_GPIO_SYSFS=y` an
 spidev. **Hardware gate for 22.03:** boot 22.03.x/5.10; firmware splits (mtd4/5/6);
 `/dev/spidev1.0` enumerates (probe 1); spid up over sysfs GPIO, no crash-loop (probe 2);
 host `t2 list --usb` → `USB␉OpenWrt`.
+
+---
+
+## 16. Hop 6 (23.05, kernel 5.15) — the deferred spidev whitelist break FINALLY fires
+
+22.03.7 (k5.10) building/handoff done. 23.05 jumps to **kernel 5.15** (tag `v23.05.6`
+= linux **5.15.189**). This is the hop the whole method was waiting for: the
+long-deferred **spidev-whitelist** break — warned-about since 19.07, deferred at 21.02
+and 22.03 because the driver kept *warning-but-creating* — is now a **hard refusal**.
+A second, mechanical delta rides along: the ramips pinmux tables relocated upstream, so
+the CS1 patch retargets a new file. `libgpiod` still stays deferred (sysfs GPIO survives
+to k5.15). Two isolated deltas, exactly the localization payoff.
+
+### 16.1 What the source shows at 5.15 (checked in `v23.05.6` tree + linux 5.15.189)
+
+| Predicted break | Reality at 23.05 / k5.15 | Action |
+|---|---|---|
+| **spidev generic `compatible="spidev"` HARD-refused** | **TRUE — FIRES at 5.15.** linux `5.15.189 drivers/spi/spidev.c` was rewritten. `spidev_probe()` now runs `device_get_match_data()` → `spidev_of_check(dev)`, which does `if (device_property_match_string(dev,"compatible","spidev") < 0) return 0; dev_err(...,"spidev listed directly in DT is not supported\n"); return -EINVAL;`. A literal `compatible="spidev"` → **`-EINVAL` → probe bails → NO `/dev/spidev1.0`**. The `of_match` table now lists only real parts (`rohm,dh2228fv`, `cisco,spi-petra`, `lineartechnology,ltc2488`, …), each `.data=&spidev_of_check`; there is also a new `spidev_spi_ids[]` id_table. | **FIX (isolated delta).** Rewrite the coprocessor node `compatible` → **`"rohm,dh2228fv"`** (a whitelisted no-op part). `spidev_of_check` then sees the compatible is *not literally* `"spidev"` → returns 0 → probe proceeds → `device_create("spidev%d.%d", bus, cs)`. **The `/dev` node name is `spidevBUS.CS` regardless of compatible**, so it is still `/dev/spidev1.0` — spid + `spid.sh` args unchanged. |
+| **CS1 pinmux patch target moved** | **TRUE (mechanical).** The ramips pinmux group tables migrated upstream from `arch/mips/ralink/mt7620.c` → **`drivers/pinctrl/ralink/pinctrl-mt7620.c`** (OpenWrt 23.05 sets `CONFIG_PINCTRL_MT7620=y` + `CONFIG_PINCTRL_RALINK=y`, confirmed in `mt7620/config-5.15:157-158`). The `refclk_grp` definition is byte-identical except the struct type renamed `rt2880_pmx_func` → `ralink_pmx_func`: `static struct ralink_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };` at line 65, same neighbours (`rgmii1_grp`→`refclk_grp`→`ephy_grp`). | **PORT.** New `patches-5.15/999-tessel-mt7620-spi-cs1.patch` with the new path + `ralink_pmx_func` type; same `37,3 → 37,1` trim. No OpenWrt patch touches `pinctrl-mt7620.c` (only `805-`/`808-` in the dir, neither hits it), so `999-` applies clean after them. |
+| **sysfs `/sys/class/gpio` removed → libgpiod** | **FALSE at 5.15.** `CONFIG_GPIO_SYSFS=y` is still **default** in `target/linux/generic/config-5.15:2237`. spid's sysfs-GPIO code runs unchanged. | **DEFER** libgpiod again — this is the **k6.6 (24.10)** hop, not 23.05. |
+| **pinmux DT-binding** | **Already covered.** `mt7620n.dtsi` at 5.15 still uses generic `groups`/`function`; the 21.02 dual-binding `state_default` fix (81710cc) covers it. | None. |
+| **firmware mtdsplit** | **NON-ISSUE.** split code in `generic/pending-5.15/400-mtd-mtdsplit-support.patch`; guard byte-identical; not in the mt7620 defconfig → harness injects `=y` into `mt7620/config-5.15`. Firmware kept bare. | None (harness injects). |
+| **switch swconfig → DSA** | **NOT YET at 23.05** for mt7620 (still swconfig). Not bridge-critical. | None. |
+| **image-recipe convention** | Same 21.02+ `DEVICE_DTS = $$(SOC)_$(1)` convention → harness `Device/tessel` block covers. | None. |
+
+### 16.2 Why the spidev fix must be VERSION-GATED (not a static swap)
+
+`spidev_of_check` matches `"spidev"` **anywhere** in the compatible list
+(`device_property_match_string`), so dual-listing `"rohm,dh2228fv","spidev"` **still**
+trips the 5.15 hard-fail. And the already-validated ≤k5.10 hops (17.01–22.03) bind
+spidev via the SPI-core `modalias=="spidev"` fallback — they need the **bare** `"spidev"`.
+No single compatible string works on both sides. The fix therefore lives in the build
+harness (`apply_overlay()`), gated on kernel version: for **k5.15+ (v23.05+)** it rewrites
+the copied `Tessel.dts` coprocessor node `compatible="spidev"` → `"rohm,dh2228fv"`; ≤22.03
+keeps the bare `"spidev"`. Already-validated 17.01–22.03 images are untouched (not rebuilt).
+The rewrite is a targeted `sed` on the statement line only (not the explanatory comment).
+
+### 16.3 Net: 23.05 is a two-delta hop (one real localization + one mechanical port)
+
+The 23.05/k5.15 hop reduces to **two isolated, pre-scoped deltas over validated 22.03**:
+
+1. **spidev whitelist (the localization payoff):** harness rewrites the coprocessor
+   `compatible` to `"rohm,dh2228fv"` for k5.15+. This is the exact release the
+   19.07-era "buggy DT" warning finally became fatal — localized to one property.
+2. **CS1 patch re-port (mechanical):** `patches-5.15/999-*` targets the relocated
+   `drivers/pinctrl/ralink/pinctrl-mt7620.c` (`ralink_pmx_func` type), same pin-37 trim.
+
+Everything else — pinmux dual-binding, mtdsplit injection, image-recipe convention,
+`GPIO_SYSFS`, swconfig — is inherited unchanged. **libgpiod remains deferred to the k6.6
+hop** (24.10/25.12), where `CONFIG_GPIO_SYSFS` is finally dropped. **Hardware gate for
+23.05:** boot 23.05.x/5.15; firmware splits (mtd4/5/6); **`/dev/spidev1.0` REAPPEARS**
+(the decisive check — with the compat fix the node is created again; the bare `"spidev"`
+would have been absent) with **no** `spidev … not supported` dmesg error; spid up over
+sysfs GPIO, no crash-loop; host `t2 list --usb` → `USB␉OpenWrt`.
+
+### 16.4 Third delta (build harness, not device): host gcc 8 required
+
+23.05 also surfaces a **host-toolchain bump** — the first since the harness was
+stood up on Ubuntu 18.04 (gcc 7.5). OpenWrt 23.05's bundled host tools (GNU **M4
+1.4.19**, etc.) run their `configure` with `-std=gnu17`; gcc 7.5 rejects the option
+and the tools phase dies immediately at `tools/m4` with *"C compiler cannot create
+executables"* (`config.log`: `gcc: error: unrecognized command line option
+'-std=gnu17'`). gcc **8** is the first release to implement c17/gnu17.
+
+Fix (Dockerfile, `build/openwrt-incremental/Dockerfile`): stay on **ubuntu:18.04**
+(so `libssl1.0-dev` and the exact package set that built the validated 17.01–22.03
+hops are preserved) and install **gcc-8/g++-8** from the bionic archive, made the
+default host compiler via `update-alternatives --set gcc /usr/bin/gcc-8` (+ `cc`
+symlink). gcc-8 also builds the earlier hops fine, so nothing regresses. This is a
+container-only change — no device/image impact — but it is a real "build-system
+bump" milestone the roadmap predicted for the upper hops (note it likely recurs at
+k6.6/24.10, which may want an even newer host gcc). After changing the Dockerfile,
+the stale `build_dir/host` + `staging_dir/host` from the gcc-7 attempt must be
+removed so the cached "compiler cannot create executables" result is discarded.

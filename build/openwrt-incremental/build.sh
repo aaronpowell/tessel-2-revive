@@ -41,6 +41,7 @@ kernel_patch_dir() {
     v18.06.*|v19.07.*) echo "patches-4.14" ;;
     v21.02.*)          echo "patches-5.4" ;;
     v22.03.*)          echo "patches-5.10" ;;
+    v23.05.*)          echo "patches-5.15" ;;
     *)                 echo "" ;;
   esac
 }
@@ -71,6 +72,30 @@ apply_overlay() {
     mkdir -p "$SRC/target/linux/ramips/$kpd"
     cp "$OVERLAY/patches/ramips/$kpd/"*.patch "$SRC/target/linux/ramips/$kpd/"
     ls "$SRC/target/linux/ramips/$kpd/"9*-tessel-*.patch 2>/dev/null || true
+  fi
+
+  # spidev DT-binding whitelist (kernel 5.15+). At k5.15 drivers/spi/spidev.c
+  # gained spidev_of_check(), which HARD-FAILS (-EINVAL, "spidev listed directly
+  # in DT is not supported") any node whose compatible is literally "spidev", and
+  # the of_match table now lists only real parts. So the bare compatible="spidev"
+  # that binds on <=k5.10 (via modalias=="spidev") no longer creates
+  # /dev/spidevX.Y -> spid can't open the coprocessor -> bridge down. Fix: use a
+  # whitelisted compatible ("rohm,dh2228fv") that spidev accepts; the /dev node
+  # name (spidevBUS.CS) is unchanged so spid and spid.sh args are untouched.
+  #
+  # This is VERSION-GATED, not a static swap: spidev_of_check matches "spidev"
+  # ANYWHERE in the compatible list (so dual-listing "rohm,dh2228fv","spidev"
+  # still trips the 5.15 hard-fail), while the validated <=k5.10 hops bind spidev
+  # via modalias=="spidev" and need the bare "spidev". No single string works on
+  # both sides, so we rewrite the copied DTS for k5.15+ only.
+  if [[ -n "$kpd" ]]; then
+    local kv="${kpd#patches-}"          # patches-5.15 -> 5.15
+    local kmaj="${kv%%.*}" kmin="${kv#*.}"
+    if (( kmaj * 1000 + kmin >= 5015 )); then
+      sed -i '/^[[:space:]]*compatible = "spidev";/s/"spidev"/"rohm,dh2228fv"/' \
+        "$SRC/target/linux/ramips/dts/Tessel.dts"
+      echo "    k$kv >= 5.15: coprocessor compatible spidev -> rohm,dh2228fv (spidev whitelist)"
+    fi
   fi
 
   # Ensure name-based firmware mtdsplit is enabled. 18.06's mt7620 defconfig set
