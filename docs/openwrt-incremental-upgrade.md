@@ -954,3 +954,36 @@ dual-spelled `i2c`→`gpio` pinmux mux in `state_default` — plus two non-bridg
 libgpiod GPIO port) are **provably not needed at 5.4** and stay deferred to whichever later hop actually
 hard-refuses `compatible="spidev"` or drops `CONFIG_GPIO_SYSFS`. **21.02.7 is the new validated
 baseline** (hop chain 17.01 ✓ / 18.06 ✓ / 19.07 ✓ / 21.02 ✓). Next: Hop 5 → 22.03 (k5.10).
+
+
+## 15. Hop 5 (22.03, kernel 5.10) — source-scoping results (verify-then-defer)
+
+21.02.7 (k5.4) is the validated baseline. 22.03 jumps to **kernel 5.10**. Full source
+investigation of the real `v22.03.7` tree shows this is a **mechanical hop** — every
+predicted k5.x break was already localized and paid down at the 21.02 pivot, and none
+of them re-activate at 5.10. The only per-hop work is the usual CS1 patch re-port.
+
+### 15.1 What the source shows at 5.10 (each predicted break, checked in `v22.03.7`)
+
+| Predicted break | Reality at 22.03 / k5.10 (verified in `v22.03.7` tree + linux 5.10.221) | Action |
+|---|---|---|
+| **spidev "buggy DT" becomes a HARD refusal** | **FALSE at 5.10.** linux `5.10.221 drivers/spi/spidev.c` `spidev_probe()` still only emits the non-fatal `WARN(... of_device_is_compatible(...,"spidev"), "buggy DT: spidev listed directly in DT")` and then **unconditionally** `device_create(... "spidev%d.%d" ...)` — the node is created regardless. Same warn-but-create as 4.14/5.4. | **DEFER** whitelist again (verify `/dev/spidev1.0` on 22.03 hardware — probe 1). |
+| **sysfs `/sys/class/gpio` removed → libgpiod** | **FALSE at 5.10.** `CONFIG_GPIO_SYSFS=y` is **default** in `target/linux/generic/config-5.10:2144`. spid's sysfs-GPIO code runs unchanged. | **DEFER** libgpiod again (probe 2). |
+| **pinmux DT-binding migration (the 21.02 break)** | **Already covered.** `mt7620n.dtsi` at 5.10 uses the generic `groups`/`function` spelling (same as 21.02). Our `Tessel.dts` `state_default` already carries **both** `ralink,group`/`ralink,function` **and** `groups`/`function="gpio"` (the 21.02 dual-binding fix) → no new DTS work. | None (covered by 81710cc). |
+| **firmware mtdsplit** | **NON-ISSUE.** name-based `split_firmware()` code present in `generic/pending-5.10/400-mtd-mtdsplit-support.patch`; `mtd_partition_split()` guard is **byte-identical** to 4.14/5.4 (`IS_ENABLED(CONFIG_MTD_SPLIT_FIRMWARE) && name=="firmware" && !compatible`). `CONFIG_MTD_SPLIT_FIRMWARE` is not in the 22.03 mt7620 defconfig (same as the 19.07 anomaly) — but the **harness auto-injects `=y`** into `mt7620/config-5.10`. Firmware partition kept bare. | None (harness injects). |
+| **switch swconfig → DSA** | **NOT YET at 22.03.** mt7620 subtarget still `DEFAULT_PACKAGES += ... swconfig` in `target.mk`; DSA migration hasn't reached mt7620. (Not bridge-critical regardless.) | None. |
+| **image-recipe convention** | **Already covered.** `image/Makefile:181` `DEVICE_DTS = $$(SOC)_$(1)` — same 21.02+ convention. Harness's convention-aware `Device/tessel` block (SOC:=mt7620n + DEVICE_DTS:=Tessel) applies. | None (covered). |
+| **CS1 SPI-registration re-port** | **MECHANICAL.** linux `5.10.221 arch/mips/ralink/mt7620.c` `refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) }` is **byte-identical** to 4.14/5.4 (verified against the stable tree); surrounding context (`rgmii1_grp`→`refclk_grp`→`ephy_grp`) matches. The pin-37 trim patch drops into a new `patches-5.10/` with the same context. | Ported: `overlay/patches/ramips/patches-5.10/999-tessel-mt7620-spi-cs1.patch`. |
+| **container / toolchain** | Python 3 prereq already added for 21.02; carries forward. No new container change surfaced. | None. |
+
+### 15.2 Net: 22.03 is a one-patch mechanical hop
+
+The entire 22.03/k5.10 hop reduces to **one bridge-critical delta over validated 21.02**:
+the CS1 pin-37 patch ported to `patches-5.10` (byte-identical target) — plus the one-line
+harness mapping `v22.03.* → patches-5.10` in `kernel_patch_dir()`. Everything else (pinmux
+dual-binding, mtdsplit injection, image-recipe convention, GPIO_SYSFS + spidev warn-but-create)
+is inherited unchanged from the 21.02 baseline. The two "big" k5.x items (spidev whitelist,
+libgpiod) remain provably deferred — 5.10 still ships `CONFIG_GPIO_SYSFS=y` and warn-but-create
+spidev. **Hardware gate for 22.03:** boot 22.03.x/5.10; firmware splits (mtd4/5/6);
+`/dev/spidev1.0` enumerates (probe 1); spid up over sysfs GPIO, no crash-loop (probe 2);
+host `t2 list --usb` → `USB␉OpenWrt`.

@@ -40,6 +40,7 @@ kernel_patch_dir() {
     v17.01.*)          echo "patches-4.4" ;;
     v18.06.*|v19.07.*) echo "patches-4.14" ;;
     v21.02.*)          echo "patches-5.4" ;;
+    v22.03.*)          echo "patches-5.10" ;;
     *)                 echo "" ;;
   esac
 }
