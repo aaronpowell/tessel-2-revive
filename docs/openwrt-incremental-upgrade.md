@@ -103,7 +103,7 @@ incrementally.
 | 0 | 15.05 "Chaos Calmer" (baseline) | 3.18 | — all three legacy paths work | ✅ | — |
 | 1 | 17.01 "Reboot" | 4.4 | **Coprocessor CS1 SPI device fails to register** (factory `spidev@1`/CS1-on-`spi@b00` idiom invalid on the in-tree single-CS driver) + SPI bus renumber | ✅ **VALIDATED** *(DTS → `&spi1` + pin-37 `spi_cs1` pinmux patch; see §11)* | **real (bounded) DTS/pinmux fix** — not purely mechanical |
 | 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ **VALIDATED** *(force-flash; §12.4)* | mechanical + trivial 1-line pinmux port |
-| 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13) | ✅ *(CS1-fixed DIAG built; HW-pending)* | mechanical — **last easy hop** |
+| 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
 | 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ⚠️ | medium |
 | 6 | 23.05 | 5.15 | stricter spidev; libgpiod effectively mandatory; switch DSA; cmake/toolchain bumps (the `urngd` CRT workaround) | ⚠️ | medium |
@@ -687,7 +687,7 @@ for real (the earlier `-n` attempt silently no-op'd on the `fwtool_check_image`
 **⇒ Hop 2 (18.06) is FULLY hardware-validated. The "17.01→19.07 mechanical" model is now
 runtime-proven at BOTH 17.01 and 18.06.**
 
-## 13. Hop 3 (19.07) — CS1 patch clean; boot panic on first flash → rootfs mtdsplit fix (re-pending)
+## 13. Hop 3 (19.07) — CS1 patch clean; boot panic on first flash → rootfs mtdsplit fix (HARDWARE-VALIDATED)
 19.07 is also kernel **4.14** with the **same** stock `mt7620n.dtsi` group name `"spi refclk"`,
 so the hop-2 `patches-4.14/999-tessel-mt7620-spi-cs1.patch` **drops straight in with zero
 changes** — the single strongest confirmation that the k4.14 port is release-general.
@@ -800,8 +800,28 @@ are now runtime-proven in the ≤19.07 band: **CS1 SPI registration (17.01)** an
 mtdsplit config drop (19.07)**. The CS1 fix is DTS; the mtdsplit fix is a one-line kernel-config
 injection (DTS deliberately unchanged from the validated layout).
 
-**Status: fix applied (DTS reverted to bare + `CONFIG_MTD_SPLIT_FIRMWARE=y` injected via build.sh);
-19.07 DIAG rebuild + hardware re-verify pending.** Success gate unchanged (§11.5) plus the boot gate:
-on the console the "firmware" partition must be **present** (`Creating 4 MTD partitions`) **and
-split** (a `mtd: … (rootfs) … root filesystem` line appears) and the kernel must reach userspace
-(WiFi-AP `Tessel-Diag` comes up for the SSH gate).
+**Status: ATTEMPT 2 HARDWARE-VALIDATED ✓ (commit `b12d0b0`, DIAG sha256 `E1586930493D21D74CEE9955
+24C86819240908D86D9C330CA2BCD19A2BB10146`).** Flashed via the spid-free repackaged-restore path and
+captured over the USB serial console + console root shell. **The firmware partition now SPLITS** —
+the exact thing attempt 1 / the original lacked:
+```
+cat /proc/mtd →
+  mtd3: 01fb0000 "firmware"
+  mtd4: 0018727b "kernel"       ← NEW (carved from firmware)
+  mtd5: 01e28d85 "rootfs"       ← NEW (root mounts from here)
+  mtd6: 01c20000 "rootfs_data"  ← NEW (overlay)
+```
+No VFS panic; `mount_root` mounted the overlay, procd/init/kmodloader ran, userspace reached. **All
+gates pass:**
+- OpenWrt 19.07.10 r11427-9ce6aa9d8d, `uname` 4.14.275 ✓
+- `/dev/spidev1.0` present (crw 153,0) — **CS1 fix holds unchanged on k4.14** ✓
+- `dmesg`: `spi spi0.0` + `spi spi1.0 force spi mode3`; **zero** `spi_device register error` ✓
+- `spid[1031] Starting` (no "Error opening SPI device", no crash-loop) + `usbexecd[1065]` both up ✓
+- WiFi up: `wlan0` link ready, `br-lan` port2(wlan0) forwarding ✓
+- host: `t2 list --usb` → `USB␉OpenWrt` ✓
+- Only the expected non-fatal WARN: `/palmbus@10000000/spi@b40/spidev@0: buggy DT: spidev listed
+  directly in DT` — **predicted; becomes a HARD refusal at k5.x/21.02** → whitelist a non-generic
+  compatible on the coprocessor node then (see §14).
+
+**Hop chain 17.01 ✓ / 18.06 ✓ / 19.07 ✓ are now ALL hardware-validated.** Commit `b12d0b0` is the
+good one; `a2fd3a6` (denx,uimage) stays superseded/bad. The 21.02 pivot is **UNPARKED** (§14).
