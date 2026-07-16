@@ -46,8 +46,8 @@ dd if="$BD" bs=4k count=1 2>/tmp/blk4.err | md5sum
 echo "  blk4 dd stderr: $(cat /tmp/blk4.err 2>/dev/null)"
 echo ""
 
-echo "[squashfs magic check @ raw mtd5 offset 0]"
-dd if="$RD" bs=4 count=1 2>/dev/null | od -An -tx1 | head -1
+echo "[squashfs magic check @ raw mtd5 offset 0]  (expect ASCII 'hsqs')"
+dd if="$RD" bs=4 count=1 2>/dev/null; echo ""
 echo ""
 
 echo "[explicit squashfs mount] mount -t squashfs -o ro $BD /mnt"
