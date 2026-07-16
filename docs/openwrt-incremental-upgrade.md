@@ -687,7 +687,7 @@ for real (the earlier `-n` attempt silently no-op'd on the `fwtool_check_image`
 **⇒ Hop 2 (18.06) is FULLY hardware-validated. The "17.01→19.07 mechanical" model is now
 runtime-proven at BOTH 17.01 and 18.06.**
 
-## 13. Hop 3 (19.07) — same k4.14 CS1 patch, DIAG image built (hardware-pending)
+## 13. Hop 3 (19.07) — CS1 patch clean; boot panic on first flash → rootfs mtdsplit fix (re-pending)
 19.07 is also kernel **4.14** with the **same** stock `mt7620n.dtsi` group name `"spi refclk"`,
 so the hop-2 `patches-4.14/999-tessel-mt7620-spi-cs1.patch` **drops straight in with zero
 changes** — the single strongest confirmation that the k4.14 port is release-general.
@@ -709,3 +709,58 @@ Blocker A). Also requires the t2-cli common.sh-clobber fix (§12.3.1) or the fla
 no-ops. Success gate = §11.5 (`/dev/spidev1.0`, `spid` up no error/crash, steady POWER LED,
 then `t2-cli list --usb` → `USB␉OpenWrt`). The 21.02 pivot stays parked until 19.07 is
 hardware-validated.
+
+### 13.2 Hop 3 (19.07) FIRST HARDWARE VERDICT — boot panic; a NEW hard break localized (rootfs mtdsplit)
+The first 19.07 DIAG flash (via force + the §12.3.1 common.sh fix) **wrote and booted the kernel
+but panicked before userspace** — a genuinely NEW divergence the incremental method caught, and it
+is **NOT** the CS1/spid work (that is upstream of userspace and was untestable until boot).
+
+**Symptom (full u-boot→kernel→panic captured over the SAMD21 USB CDC console):**
+- Kernel 4.14.275 boots, `MIPS: machine is Tessel 2`, `spi spi0.0`/`spi spi1.0 force spi mode3`
+  both appear (so the CS1 DTS is fine), the 4 flash partitions are created:
+  `u-boot / u-boot-env / factory / firmware (0x50000-0x2000000)`.
+- **Then:** `VFS: Cannot open root device "(null)" ... error -6` → `Kernel panic - not syncing:
+  VFS: Unable to mount root fs on unknown-block(0,0)` → reboot loop. Kernel cmdline has **no
+  `root=`** and the only mtdblocks are `mtdblock0..3` (the 4 raw partitions).
+- **Smoking gun:** the "firmware" partition is **never split** into `kernel` + `rootfs` — there is
+  no `2 uimage-fw partitions found` line and no `mtd: setting mtdX (rootfs) to be root filesystem`.
+  With no rootfs block device there is nothing to mount → panic. (This also matches the user's
+  "POWER blinking, no WiFi, faint ERR" — Linux never reached userspace.)
+
+**Root cause (pinned at build-source level; 18.06 vs 19.07 upstream diff):** ramips changed **how
+the firmware partition is split** between 18.06 and 19.07:
+- **≤18.06 (k≤4.14):** split is **name-based** — `CONFIG_MTD_SPLIT_FIRMWARE=y` runs the FIRMWARE-type
+  parsers on **any partition labelled `"firmware"`**. 18.06's `mtdsplit_uimage.c` `uimage-fw` parser
+  has **no** `of_match_table`; a bare `label = "firmware"` is enough. (Confirmed: 18.06
+  `mt7620/config-4.14` has `CONFIG_MTD_SPLIT_FIRMWARE=y`; 18.06 `WRTNODE.dts` firmware partition is
+  bare, no `compatible`.)
+- **≥19.07:** the name-based mechanism is **removed** (`CONFIG_MTD_SPLIT_FIRMWARE` is gone from
+  19.07's `mt7620/config-4.14`) and replaced by **DT-driven matching** — 19.07's `mtdsplit_uimage.c`
+  gains `.of_match_table = { .compatible = "denx,uimage" }` (`#if LINUX_VERSION >= 4.9`), so the
+  firmware partition **must declare `compatible = "denx,uimage"`** to be split. (Confirmed: 19.07
+  `WRTNODE.dts` — same SoC, same `mt7620n.dtsi` — **added** `compatible = "denx,uimage"` to its
+  firmware partition for exactly this reason.)
+- Our release-agnostic `Tessel.dts` carried the **old bare `label = "firmware"`** (no `compatible`),
+  which is why it booted at 17.01/18.06 (name-based) but panics at 19.07 (no parser matches → no
+  split → no rootfs). **`CONFIG_MTD_SPLIT_UIMAGE_FW` was a red herring — it is `=y` in both; the
+  gap is the DTS `compatible`, not a kernel symbol.**
+
+**Fix (single-line DTS, all-hop safe):** add `compatible = "denx,uimage";` to the firmware
+partition in `overlay/dts/Tessel.dts`. This is **belt-and-suspenders across the whole series**:
+- ≤18.06: the `uimage-fw` parser has no `of_match_table`, so the `compatible` is simply ignored and
+  the name-based `CONFIG_MTD_SPLIT_FIRMWARE` split still applies → **no regression** to the
+  hardware-validated 17.01/18.06 hops.
+- ≥19.07: the `compatible` is exactly what the DT-driven parser matches → firmware splits into
+  kernel+rootfs → rootfs mounts → boot proceeds.
+Matches upstream 19.07 `WRTNODE.dts` verbatim. No change to the CS1/pinmux patch or config.
+
+**Model update:** the "17.01→19.07 is purely mechanical" claim is **further refined** — 19.07 needed
+a small, bounded, runtime-only DTS fix (rootfs mtdsplit `compatible`) that pure build analysis of
+17.01/18.06 could not surface, exactly like the CS1 break at 17.01. Two independent hard breaks are
+now runtime-proven in the ≤19.07 band: **CS1 SPI registration (17.01)** and **rootfs mtdsplit
+DT-compatible (19.07)**. Both are DTS-level and land in the shared `Tessel.dts`.
+
+**Status: DTS fix applied; 19.07 DIAG rebuild + hardware re-verify pending.** Success gate unchanged
+(§11.5) plus the new boot gate: on the console the "firmware" partition must split (a
+`mtd: setting mtdX (rootfs) to be root filesystem` line appears) and the kernel must reach
+userspace (WiFi-AP `Tessel-Diag` comes up for the SSH gate).
