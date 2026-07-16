@@ -729,38 +729,79 @@ is **NOT** the CS1/spid work (that is upstream of userspace and was untestable u
 
 **Root cause (pinned at build-source level; 18.06 vs 19.07 upstream diff):** ramips changed **how
 the firmware partition is split** between 18.06 and 19.07:
-- **≤18.06 (k≤4.14):** split is **name-based** — `CONFIG_MTD_SPLIT_FIRMWARE=y` runs the FIRMWARE-type
-  parsers on **any partition labelled `"firmware"`**. 18.06's `mtdsplit_uimage.c` `uimage-fw` parser
-  has **no** `of_match_table`; a bare `label = "firmware"` is enough. (Confirmed: 18.06
-  `mt7620/config-4.14` has `CONFIG_MTD_SPLIT_FIRMWARE=y`; 18.06 `WRTNODE.dts` firmware partition is
-  bare, no `compatible`.)
-- **≥19.07:** the name-based mechanism is **removed** (`CONFIG_MTD_SPLIT_FIRMWARE` is gone from
-  19.07's `mt7620/config-4.14`) and replaced by **DT-driven matching** — 19.07's `mtdsplit_uimage.c`
-  gains `.of_match_table = { .compatible = "denx,uimage" }` (`#if LINUX_VERSION >= 4.9`), so the
-  firmware partition **must declare `compatible = "denx,uimage"`** to be split. (Confirmed: 19.07
-  `WRTNODE.dts` — same SoC, same `mt7620n.dtsi` — **added** `compatible = "denx,uimage"` to its
-  firmware partition for exactly this reason.)
-- Our release-agnostic `Tessel.dts` carried the **old bare `label = "firmware"`** (no `compatible`),
-  which is why it booted at 17.01/18.06 (name-based) but panics at 19.07 (no parser matches → no
-  split → no rootfs). **`CONFIG_MTD_SPLIT_UIMAGE_FW` was a red herring — it is `=y` in both; the
-  gap is the DTS `compatible`, not a kernel symbol.**
+- **≤18.06 (k≤4.14):** split is **name-based** — `CONFIG_MTD_SPLIT_FIRMWARE=y` makes
+  `mtd_partition_split()` run the FIRMWARE-type parsers on any partition labelled `"firmware"` that
+  has no `compatible`. 18.06's `mtdsplit_uimage.c` `uimage-fw` parser also has **no** `of_match_table`.
+  So a bare `label = "firmware"` is enough. (Confirmed: 18.06 `mt7620/config-4.14:160` has
+  `CONFIG_MTD_SPLIT_FIRMWARE=y`; 18.06 `WRTNODE.dts` firmware partition is bare.)
+- **≥19.07:** the name-based split **code still exists** (`generic/pending-4.14/402-mtd-use-typed-
+  mtd-parsers-*` still defines `split_firmware()`), but 19.07 **dropped `CONFIG_MTD_SPLIT_FIRMWARE`
+  from the mt7620 defconfig** (it is `# not set`), so the name-based path is compiled out. In
+  parallel 19.07 **added** a DT-driven path — `mtdsplit_uimage.c` gains
+  `.of_match_table = { .compatible = "denx,uimage" }` (`#if LINUX_VERSION >= 4.9`) — which upstream
+  boards adopt (19.07 `WRTNODE.dts` added `compatible = "denx,uimage"` *inside a `fixed-partitions`
+  wrapper*). So on 19.07 a firmware partition splits via **either** the DT `compatible` **or** the
+  re-enabled name-based config — but **not** with a bare `label="firmware"` and no config.
+- Our release-agnostic `Tessel.dts` carried the **bare `label = "firmware"`** (no `compatible`),
+  which booted at 17.01/18.06 (their defconfig had `CONFIG_MTD_SPLIT_FIRMWARE=y`) but panics at
+  19.07 (config dropped, no `compatible` → neither path fires → no split → no rootfs).
+  **Correction to the first hypothesis:** the gap is a **kernel config symbol**
+  (`CONFIG_MTD_SPLIT_FIRMWARE`), *not* a missing DTS `compatible`. `CONFIG_MTD_SPLIT_UIMAGE_FW` is a
+  red herring (=y in both). See the two fix attempts below — the DTS `compatible` approach was tried
+  first and **failed on hardware**.
 
-**Fix (single-line DTS, all-hop safe):** add `compatible = "denx,uimage";` to the firmware
-partition in `overlay/dts/Tessel.dts`. This is **belt-and-suspenders across the whole series**:
-- ≤18.06: the `uimage-fw` parser has no `of_match_table`, so the `compatible` is simply ignored and
-  the name-based `CONFIG_MTD_SPLIT_FIRMWARE` split still applies → **no regression** to the
-  hardware-validated 17.01/18.06 hops.
-- ≥19.07: the `compatible` is exactly what the DT-driven parser matches → firmware splits into
-  kernel+rootfs → rootfs mounts → boot proceeds.
-Matches upstream 19.07 `WRTNODE.dts` verbatim. No change to the CS1/pinmux patch or config.
+**Fix — ATTEMPT 1 (FAILED on hardware): bare-child `compatible = "denx,uimage"`.** The first
+attempt added `compatible = "denx,uimage";` directly to the firmware partition, on the theory that
+19.07's DT-driven parser (`of_match_table = {"denx,uimage"}`) would then match it. **This REGRESSED
+the partition table** and still panics. Full boot log: `soc-1907-denxuimage-regression.log`.
+- BEFORE (bare, no compatible): `Creating 4 MTD partitions` — u-boot / u-boot-env / factory /
+  **firmware** (present but unsplit).
+- AFTER (bare child + `compatible`): `3 fixed-partitions partitions found` — the **firmware
+  partition VANISHES entirely** (only u-boot / u-boot-env / factory) → still no rootfs → panic.
+- **Why:** our partitions are **bare children of the flash node** (`m25p80@0`), with **no
+  `partitions { compatible = "fixed-partitions"; … }` wrapper**. In that legacy layout, a partition
+  leaf that itself carries a `compatible` is **disqualified from fixed-partitions enumeration**, so
+  the node is skipped and never created. A nested `compatible` is only legal (and only DT-matched)
+  when the partition sits *inside* a `fixed-partitions` container — which is exactly how upstream
+  `WRTNODE.dts` declares it. Our bare layout can't use the one-line DT approach without also adding
+  the wrapper.
+
+**Fix — ATTEMPT 2 (adopted; mirrors validated 18.06): re-enable NAME-BASED split via kernel config.**
+The name-based split code **still exists** in 19.07's k4.14 tree — `generic/pending-4.14/402-mtd-
+use-typed-mtd-parsers-for-rootfs-and-firmware-split.patch` adds `split_firmware()` /
+`mtd_partition_split()`, which runs the FIRMWARE parsers on a partition **iff**:
+```c
+IS_ENABLED(CONFIG_MTD_SPLIT_FIRMWARE) &&
+!strcmp(part->mtd.name, SPLIT_FIRMWARE_NAME /* "firmware" */) &&
+!of_find_property(mtd_get_of_node(&part->mtd), "compatible", NULL)   // node must have NO compatible
+```
+19.07 merely **dropped `CONFIG_MTD_SPLIT_FIRMWARE` from the mt7620 defconfig** (it is `# not set` in
+`generic/config-4.14`); 18.06's `mt7620/config-4.14:160` had it `=y` (verified in-tree — the *only*
+`MTD_SPLIT_*` symbol that differs between the two; both share JIMAGE/SEAMA/TPLINK/**UIMAGE**). So the
+fix is:
+1. **Revert the DTS to a bare firmware partition** (no `compatible`) — byte-identical to the
+   17.01/18.06-validated layout. The `!of_find_property(…,"compatible")` guard above *requires* it
+   to be bare; a `compatible` would both break enumeration **and** disable the name-based split.
+2. **Inject `CONFIG_MTD_SPLIT_FIRMWARE=y` into the mt7620 kernel config fragment** from `build.sh`
+   `apply_overlay()` (`target/linux/ramips/mt7620/config-<kver>`). It is a **kernel** symbol, so a
+   top-level `config.seed` entry is silently dropped by `make defconfig` — it must go in the target
+   fragment, which is where 18.06 carried it.
+
+This makes 19.07's firmware-split behaviour **identical to hardware-validated 18.06** (same bare
+4-partition layout, same name-based split, same `CONFIG_MTD_SPLIT_UIMAGE_FW=y` parser). The
+DT-driven `denx,uimage` + `fixed-partitions` wrapper approach is the eventual upstream idiom but is
+**deferred** to whichever later hop actually removes the name-based `split_firmware` code (a bigger,
+structural DTS change; not needed while patch 402 is still present).
 
 **Model update:** the "17.01→19.07 is purely mechanical" claim is **further refined** — 19.07 needed
-a small, bounded, runtime-only DTS fix (rootfs mtdsplit `compatible`) that pure build analysis of
-17.01/18.06 could not surface, exactly like the CS1 break at 17.01. Two independent hard breaks are
-now runtime-proven in the ≤19.07 band: **CS1 SPI registration (17.01)** and **rootfs mtdsplit
-DT-compatible (19.07)**. Both are DTS-level and land in the shared `Tessel.dts`.
+a small, bounded, runtime-only fix (re-enable name-based firmware mtdsplit) that pure build analysis
+of 17.01/18.06 could not surface, exactly like the CS1 break at 17.01. Two independent hard breaks
+are now runtime-proven in the ≤19.07 band: **CS1 SPI registration (17.01)** and **firmware
+mtdsplit config drop (19.07)**. The CS1 fix is DTS; the mtdsplit fix is a one-line kernel-config
+injection (DTS deliberately unchanged from the validated layout).
 
-**Status: DTS fix applied; 19.07 DIAG rebuild + hardware re-verify pending.** Success gate unchanged
-(§11.5) plus the new boot gate: on the console the "firmware" partition must split (a
-`mtd: setting mtdX (rootfs) to be root filesystem` line appears) and the kernel must reach
-userspace (WiFi-AP `Tessel-Diag` comes up for the SSH gate).
+**Status: fix applied (DTS reverted to bare + `CONFIG_MTD_SPLIT_FIRMWARE=y` injected via build.sh);
+19.07 DIAG rebuild + hardware re-verify pending.** Success gate unchanged (§11.5) plus the boot gate:
+on the console the "firmware" partition must be **present** (`Creating 4 MTD partitions`) **and
+split** (a `mtd: … (rootfs) … root filesystem` line appears) and the kernel must reach userspace
+(WiFi-AP `Tessel-Diag` comes up for the SSH gate).

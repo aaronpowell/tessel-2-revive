@@ -72,6 +72,28 @@ apply_overlay() {
     ls "$SRC/target/linux/ramips/$kpd/"9*-tessel-*.patch 2>/dev/null || true
   fi
 
+  # Ensure name-based firmware mtdsplit is enabled. 18.06's mt7620 defconfig set
+  # CONFIG_MTD_SPLIT_FIRMWARE=y; 19.07 dropped it. Without it the kernel never
+  # splits the bare "firmware"-labelled partition into kernel+rootfs (the split
+  # fires only for a partition named "firmware" that has NO `compatible`), so
+  # there is no rootfs mtd, no root=, and the board panics "unable to mount root
+  # fs" at boot. It is a KERNEL config symbol (lives in the target kernel config
+  # fragment, not the top-level OpenWrt .config), so it must be injected here —
+  # a seed entry is silently dropped by `make defconfig`.
+  if [[ -n "$kpd" ]]; then
+    local kver="${kpd#patches-}"          # patches-4.14 -> 4.14
+    local kcfg
+    for kcfg in "$SRC/target/linux/ramips/mt7620/config-$kver" \
+                "$SRC/target/linux/ramips/config-$kver"; do
+      if [[ -f "$kcfg" ]]; then
+        sed -i '/CONFIG_MTD_SPLIT_FIRMWARE[ =]/d' "$kcfg"
+        echo "CONFIG_MTD_SPLIT_FIRMWARE=y" >> "$kcfg"
+        echo "    ensured CONFIG_MTD_SPLIT_FIRMWARE=y in ${kcfg#$SRC/}"
+        break
+      fi
+    done
+  fi
+
   # Add a Device/tessel profile to the mt7620 image Makefile (idempotent).
   local mk="$SRC/target/linux/ramips/image/mt7620.mk"
   if ! grep -q "Device/tessel" "$mk"; then

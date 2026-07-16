@@ -73,17 +73,32 @@
 		};
 
 		/*
-		 * `denx,uimage` triggers the uImage mtdsplit parser to carve this
-		 * partition into "kernel" + "rootfs" at boot. On <=18.06 (k<=4.14)
-		 * the split is name-based (CONFIG_MTD_SPLIT_FIRMWARE, applied to any
-		 * partition labelled "firmware") and this compatible is ignored/benign.
-		 * From 19.07 upstream dropped the name-based split and made it purely
-		 * DT-driven via the parser's of_match_table = { "denx,uimage" }; without
-		 * this line 19.07 never creates the rootfs mtd -> no root= -> kernel
-		 * panic "Unable to mount root fs". Matches upstream 19.07 WRTNODE.dts.
+		 * Firmware partition — deliberately declared WITHOUT a `compatible`.
+		 * OpenWrt splits it into kernel + rootfs at boot via the NAME-BASED
+		 * mechanism (drivers/mtd/mtdpart.c mtd_partition_split -> split_firmware,
+		 * patch generic/pending-4.14/402-*). That path fires only when ALL of:
+		 *   - CONFIG_MTD_SPLIT_FIRMWARE=y   (injected by build.sh into the mt7620
+		 *                                    kernel config fragment — 18.06's
+		 *                                    defconfig had it =y; 19.07 dropped
+		 *                                    it, and it is a KERNEL symbol so a
+		 *                                    top-level .config seed entry is
+		 *                                    dropped by `make defconfig`)
+		 *   - partition name == "firmware"  (SPLIT_FIRMWARE_NAME)
+		 *   - the node has NO "compatible"  (!of_find_property(...,"compatible"))
+		 *
+		 * A `compatible = "denx,uimage"` here is DOUBLY wrong on our layout:
+		 *   (1) our partitions are bare children of the flash node (no
+		 *       `partitions { compatible = "fixed-partitions"; ... }` wrapper),
+		 *       and a bare child that carries a compatible is skipped by the
+		 *       fixed-partitions parser -> the firmware partition VANISHES
+		 *       entirely (hardware-observed: "3 MTD partitions", no firmware);
+		 *   (2) even if enumerated, the compatible trips the !compatible guard
+		 *       above and disables the name-based split.
+		 * The DT-driven denx,uimage path needs the fixed-partitions wrapper and
+		 * is deferred to whichever later hop actually removes the name-based
+		 * split upstream. Until then, keep this bare (matches proven 17.01/18.06).
 		 */
 		partition@50000 {
-			compatible = "denx,uimage";
 			label = "firmware";
 			reg = <0x50000 0x1fb0000>;
 		};
