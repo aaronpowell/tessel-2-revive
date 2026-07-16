@@ -105,7 +105,7 @@ incrementally.
 | 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ **VALIDATED** *(force-flash; §12.4)* | mechanical + trivial 1-line pinmux port |
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
-| 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ✅ **DIAG BUILT** *(hardware-pending; §15)* | mechanical (1 patch) |
+| 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin; **NEW: spid boot-race** (spidev became a loadable module) → `spid-start` wait-loop (§15.3) | ✅ **HARDWARE-VALIDATED** (`23f13fe`; DIAG `D6E4FFD5…`) | mechanical (1 patch) + 1 all-hop boot-race fix |
 | 6 | 23.05 | 5.15 | **spidev generic compat HARD-refused (the deferred break fires)**; CS1 pinmux file relocated; host gcc 8 required; sysfs GPIO still default | ✅ **DIAG BUILT** *(3 deltas; §16; hardware-pending)* | 3 deltas (1 real + 2 mechanical) |
 | 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⚠️ | validates the port |
 | 8 | **25.12 (END)** | 6.6 | new end target — **only OpenWrt branch still receiving CVE fixes** in mid-2026 (22.03 EOL Apr-2024, 23.05 EOL Aug-2025, 24.10 EOLs Sep-5-2026) | ⛔ | final validation |
@@ -1019,6 +1019,33 @@ at 22.03+ it waits the ~13 s. Preferred over bumping procd respawn retries — d
 doesn't spam failed launches. **Carries forward unchanged** to 23.05/24.10/25.12 (spidev stays a
 module). **Re-validation gate:** spid up **AT BOOT** with no manual start — steady POWER,
 `pgrep spid`+`usbexecd` steady, `t2 list --usb` → `USB␉OpenWrt`.
+
+#### 15.3.1 Hardware verdict — spid-race-fixed image `D6E4FFD5…` (VALIDATED AT BOOT ✅)
+
+Parent reflashed the wait-loop DIAG (`tessel-22.03-DIAG.bin` sha256
+`D6E4FFD50EFCAFE6F3EDFEBE20906BE5293B458D2C6C1D340E7278A86DBCF19B`, 5,505,836 bytes;
+supersedes the race-afflicted `1B0F7479…`). On a normal (warm/fast) boot the wait-loop
+fix is **hardware-proven**: `spid[1322]` + `usbexecd[1385]` both steady **at boot with no
+manual start**, single "Starting", POWER solid and stays solid, `/proc/mtd` splits
+(mtd4/5/6), `/dev/spidev1.0` present, zero kernel panic, host `t2 list --usb` →
+`USB␉OpenWrt`. **22.03.7/k5.10.221 is the new validated baseline.** The all-hop wait-loop
+carry-forward is now proven on hardware (not just analysis).
+
+**Two non-blocking watch-items logged (NOT gating this hop; flag if they recur):**
+
+1. **First-boot-after-flash only — slow + a one-time modprobe Oops.** The very first boot
+   after flashing is pathologically slow (~128 s to spid) due to jffs2 `rootfs_data` overlay
+   formatting + entropy starvation, and threw a **one-time kernel Oops** at ~191 s uptime
+   (`epc 0x70263490` "Bad address in epc", `Comm: modprobe`, during the wifi/mac80211 module
+   load window). The device reboots once, then the 2nd boot is fast and clean — the Oops did
+   **not recur** (steady-boot `dmesg | grep -c 'Oops\|panic'` = 0). Likely an entropy/timing
+   artifact of the entropy-starved first boot. **Flag if it ever reappears on a warm boot.**
+2. **rt2800 wifi noise on the slow first boot.** `rt2800` logged "BBP/RF register access
+   failed, aborting" + "RF RX busy in LOFT IQ calibration" on that slow first boot. `wlan0`
+   still came up (entered forwarding), but the AP was **not** re-confirmed as actually usable
+   at 5.10. Wifi was validated at 21.02; watch whether `rt2800` at k5.10+ has a real
+   regression — **matters for the final production image** (working-wifi is the user's goal).
+   Not gating the incremental bridge hops.
 
 ---
 
