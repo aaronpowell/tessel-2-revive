@@ -103,6 +103,7 @@ define Device/tessel
   DTS := Tessel
   IMAGE_SIZE := $(ralink_default_fw_size_32M)
   DEVICE_TITLE := Tessel 2
+  SUPPORTED_DEVICES := tessel,tessel2 tessel tessel2
   DEVICE_PACKAGES := tessel-tools kmod-spi-dev kmod-usb2 kmod-usb-ohci
 endef
 TARGET_DEVICES += tessel

@@ -825,3 +825,40 @@ gates pass:**
 
 **Hop chain 17.01 ✓ / 18.06 ✓ / 19.07 ✓ are now ALL hardware-validated.** Commit `b12d0b0` is the
 good one; `a2fd3a6` (denx,uimage) stays superseded/bad. The 21.02 pivot is **UNPARKED** (§14).
+
+## 14. Hop 4 (21.02, kernel 5.4) — THE PIVOT: source-scoping results (verify-then-defer)
+
+19.07 (k4.14) is the top of the "k4.x band"; 21.02 jumps to **kernel 5.4**, long predicted as the
+pivot where the spid/spidev/GPIO bridge finally breaks. **Source investigation of the real
+`v21.02.7` tree materially shrank the predicted scope** — most of the feared k5.x breaks do NOT
+actually fire at 5.4. The incremental method's core payoff: the breaks are not where we guessed.
+
+### 14.1 What the source actually shows at 5.4 (each predicted break, checked in-tree)
+
+| Predicted k5.x break | Reality at 21.02 / k5.4 (verified in `v21.02.7` tree + mainline 5.4) | Action |
+|---|---|---|
+| **spidev "buggy DT" becomes a HARD refusal** | **FALSE at 5.4.** Mainline 5.4 `drivers/spi/spidev.c` `spidev_probe()` still only emits a **non-fatal `WARN(... "buggy DT: spidev listed directly in DT")`** and then **creates `/dev/spidevX.Y` anyway** — same as k4.14. The SPI core also still has the modalias fallback (`strcmp(spi->modalias, "spidev")`), so a `compatible = "spidev"` node binds. Whitelist (e.g. `rohm,dh2228fv`) not required yet. | **DEFER** the whitelist to the hop that truly hard-refuses (verify `/dev/spidev1.0` appears on 21.02 hardware first). |
+| **sysfs `/sys/class/gpio` removed → spid GPIO must move to libgpiod** | **FALSE at 5.4.** `CONFIG_GPIO_SYSFS=y` is **default** in `target/linux/generic/config-5.4:1850`. `/sys/class/gpio` works, so `spid`'s sysfs-GPIO code (IRQ=2, SYNC=1, gpiochip base 0) runs unchanged. The mt7620 `ralink,gpio-base = <0>` is kept in the 5.4 dtsi, so the global sysfs numbers still resolve. `spid-start` is already release-agnostic. | **DEFER** the libgpiod port to the hop that removes/disables sysfs GPIO. |
+| **firmware mtdsplit changes (cf. the 19.07 panic)** | **NON-ISSUE at 5.4.** `CONFIG_MTD_SPLIT_FIRMWARE=y` is **default** in `target/linux/ramips/mt7620/config-5.4:250` (19.07 was the anomaly that dropped it), and the name-based `split_firmware` code (generic `pending-5.4/402-*`) is still present. Our bare `label="firmware"` partition splits exactly as on validated 18.06/19.07. (The harness still injects `=y` as belt-and-suspenders.) | None (works). |
+| **CS1 SPI-registration fix must be re-ported to k5.4** | **MECHANICAL.** The pinmux group table `arch/mips/ralink/mt7620.c` `refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) }` is **byte-identical** between mainline 4.14 and 5.4, and `mt7620n.dtsi` still has `spi1: spi@b40` + `spi_cs1` with group name `"spi refclk"`. The pin-37 trim patch drops into `patches-5.4/` with the same context. | Ported: `overlay/patches/ramips/patches-5.4/999-tessel-mt7620-spi-cs1.patch`. |
+| **build system / toolchain churn** | **ONE new break: the container.** 21.02's `make defconfig` prereq requires **Python ≥3.5 + python3-distutils**; the Ubuntu 18.04 image only had Python 2 → `Prerequisite check failed`. First hop to drop Python 2. | Fixed: added `python3 python3-dev python3-distutils python3-setuptools` to the Dockerfile. |
+| **SUPPORTED_DEVICES / flash self-accept** | Board DT compatible is `tessel,tessel2`; images list only `tessel` → cross-version sysupgrade needs `-F` (§12.3 Blocker A). | Added `SUPPORTED_DEVICES := tessel,tessel2 tessel tessel2` to `Device/tessel` so images self-accept (parent still flashes with force; harmless). |
+
+### 14.2 Net: the 21.02 "pivot" is far smaller than feared — one real bridge delta
+
+Boot/bridge-critical functional deltas over the validated 19.07 recipe reduce to **just the CS1
+pin-37 patch ported to `patches-5.4`** (same as every hop so far), plus two harness fixes that are
+**not** bridge logic: the container `python3` prereq and the (optional) `SUPPORTED_DEVICES` flash
+convenience. The two "big pivot" items — the **spidev whitelist** and the **libgpiod GPIO port** —
+are **provably not needed at 5.4** and are **deferred** to whichever later hop (22.03/k5.10,
+23.05/k5.15, or 24.10/k6.6) actually (a) hard-refuses a `compatible="spidev"` node or (b) drops
+`CONFIG_GPIO_SYSFS`. That is exactly the localisation the incremental method exists to produce:
+the 24.10 "undebuggable" bridge failure is now bounded to *one of those two upstream changes*, at a
+*specific* later hop, rather than a monolithic k4.14→k6.6 leap.
+
+**Status: 21.02 DIAG building** (first 21.02 build compiles a fresh k5.4 toolchain). On exit 0:
+verify the CS1 patch applied (no `.rej`), DTB shows `spi@b40` + `spidev@0`, firmware partition bare;
+record sha256; hand parent. Hardware gate = §11.5 **plus** the two verify-then-defer probes:
+(1) does `/dev/spidev1.0` still enumerate at k5.4 (spidev warn-but-create holds)? and (2) does
+`spid` bring up the bridge over sysfs GPIO unchanged? If both hold, 21.02 is validated with a
+near-mechanical delta and the real pivot work moves to a later, still-single hop.

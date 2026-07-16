@@ -1,0 +1,31 @@
+Tessel 2: trim the mt7620 "spi refclk" pinmux group to pin 37 only (k5.4).
+
+The Tessel coprocessor (SAMD21) sits on the MT7620's second SPI chip-select, which
+upstream OpenWrt models as a separate controller spi1: spi@b40 (bus 1). Its pinctrl
+references the pin group the .dtsi labels `spi_cs1`, and on the 21.02 (kernel 5.4)
+mt7620n.dtsi that node maps to `ralink,group = "spi refclk"` -- the STOCK group name
+(identical to the 18.06/19.07 k4.14 layout; unlike 17.01/k4.4 which used "spi_cs1").
+
+The pinmux group table lives in arch/mips/ralink/mt7620.c, and the `refclk_grp`
+definition is byte-identical between kernel 4.14 and 5.4:
+    static struct rt2880_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };
+so this patch applies with the same context as the validated patches-4.14 version.
+
+Stock "spi refclk" spans pins 37, 38, 39 -- enabling &spi1 with that 3-pin group
+works for CS1 but steals pin 38, which Tessel wires to the user2 (blue) LED (leds-gpio
+probe fails with -2, "pin 38 is not set to gpio mux"). Trimming the group to pin 37
+only keeps the same hardware mode bit (MT7620_GPIO_MODE_SPI_REF_CLK, which makes pin
+37 the 2nd SPI chip select) while freeing pins 38/39 for GPIO/LED -- fixing the LED
+while keeping CS1.
+
+--- a/arch/mips/ralink/mt7620.c
++++ b/arch/mips/ralink/mt7620.c
+@@ -60,7 +60,7 @@ static struct rt2880_pmx_func mdio_grp[] = {
+ 	FUNC("refclk", MT7620_GPIO_MODE_MDIO_REFCLK, 22, 2),
+ };
+ static struct rt2880_pmx_func rgmii1_grp[] = { FUNC("rgmii1", 0, 24, 12) };
+-static struct rt2880_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) };
++static struct rt2880_pmx_func refclk_grp[] = { FUNC("spi refclk", 0, 37, 1) };
+ static struct rt2880_pmx_func ephy_grp[] = { FUNC("ephy", 0, 40, 5) };
+ static struct rt2880_pmx_func rgmii2_grp[] = { FUNC("rgmii2", 0, 60, 12) };
+ static struct rt2880_pmx_func wled_grp[] = { FUNC("wled", 0, 72, 1) };
