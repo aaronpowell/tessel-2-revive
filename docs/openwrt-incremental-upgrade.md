@@ -841,7 +841,7 @@ actually fire at 5.4. The incremental method's core payoff: the breaks are not w
 | **sysfs `/sys/class/gpio` removed → spid GPIO must move to libgpiod** | **FALSE at 5.4.** `CONFIG_GPIO_SYSFS=y` is **default** in `target/linux/generic/config-5.4:1850`. `/sys/class/gpio` works, so `spid`'s sysfs-GPIO code (IRQ=2, SYNC=1, gpiochip base 0) runs unchanged. The mt7620 `ralink,gpio-base = <0>` is kept in the 5.4 dtsi, so the global sysfs numbers still resolve. `spid-start` is already release-agnostic. | **DEFER** the libgpiod port to the hop that removes/disables sysfs GPIO. |
 | **firmware mtdsplit changes (cf. the 19.07 panic)** | **NON-ISSUE at 5.4.** `CONFIG_MTD_SPLIT_FIRMWARE=y` is **default** in `target/linux/ramips/mt7620/config-5.4:250` (19.07 was the anomaly that dropped it), and the name-based `split_firmware` code (generic `pending-5.4/402-*`) is still present. Our bare `label="firmware"` partition splits exactly as on validated 18.06/19.07. (The harness still injects `=y` as belt-and-suspenders.) | None (works). |
 | **CS1 SPI-registration fix must be re-ported to k5.4** | **MECHANICAL.** The pinmux group table `arch/mips/ralink/mt7620.c` `refclk_grp[] = { FUNC("spi refclk", 0, 37, 3) }` is **byte-identical** between mainline 4.14 and 5.4, and `mt7620n.dtsi` still has `spi1: spi@b40` + `spi_cs1` with group name `"spi refclk"`. The pin-37 trim patch drops into `patches-5.4/` with the same context. | Ported: `overlay/patches/ramips/patches-5.4/999-tessel-mt7620-spi-cs1.patch`. |
-| **build system / toolchain churn** | **ONE new break: the container.** 21.02's `make defconfig` prereq requires **Python ≥3.5 + python3-distutils**; the Ubuntu 18.04 image only had Python 2 → `Prerequisite check failed`. First hop to drop Python 2. | Fixed: added `python3 python3-dev python3-distutils python3-setuptools` to the Dockerfile. |
+| **build system / toolchain churn** | **TWO new breaks, both build-harness (not bridge logic).** (1) **Container:** 21.02's `make defconfig` prereq requires **Python ≥3.5 + python3-distutils**; the Ubuntu 18.04 image only had Python 2 → `Prerequisite check failed`. First hop to drop Python 2. (2) **Image-recipe convention:** 21.02 rewrote the ramips `Device/…` recipe — `Device/Default` now defaults `DEVICE_DTS = $$(SOC)_$(1)` (`image.mk:165`), the old `DTS :=`/`DEVICE_TITLE :=` vars are gone, and DTS filenames are SOC-prefixed. Our 17.01-era block (`DTS := Tessel`) left `DEVICE_DTS` = `_tessel` (empty SOC) → world failed at the DTB step: `cpp: error: ../dts/_tessel.dts: No such file or directory`. | Fixed: (1) `python3*` in the Dockerfile; (2) `apply_overlay()` detects the new convention and emits `SOC := mt7620n` + explicit `DEVICE_DTS := Tessel` (keeps our single `Tessel.dts`) + `DEVICE_VENDOR`/`DEVICE_MODEL`; pre-21.02 keep the old block. |
 | **SUPPORTED_DEVICES / flash self-accept** | Board DT compatible is `tessel,tessel2`; images list only `tessel` → cross-version sysupgrade needs `-F` (§12.3 Blocker A). | Added `SUPPORTED_DEVICES := tessel,tessel2 tessel tessel2` to `Device/tessel` so images self-accept (parent still flashes with force; harmless). |
 
 ### 14.2 Net: the 21.02 "pivot" is far smaller than feared — one real bridge delta
@@ -856,9 +856,15 @@ are **provably not needed at 5.4** and are **deferred** to whichever later hop (
 the 24.10 "undebuggable" bridge failure is now bounded to *one of those two upstream changes*, at a
 *specific* later hop, rather than a monolithic k4.14→k6.6 leap.
 
-**Status: 21.02 DIAG building** (first 21.02 build compiles a fresh k5.4 toolchain). On exit 0:
-verify the CS1 patch applied (no `.rej`), DTB shows `spi@b40` + `spidev@0`, firmware partition bare;
-record sha256; hand parent. Hardware gate = §11.5 **plus** the two verify-then-defer probes:
-(1) does `/dev/spidev1.0` still enumerate at k5.4 (spidev warn-but-create holds)? and (2) does
-`spid` bring up the bridge over sysfs GPIO unchanged? If both hold, 21.02 is validated with a
-near-mechanical delta and the real pivot work moves to a later, still-single hop.
+**Status: 21.02 DIAG BUILT ✅** (world exit 0 after the two harness fixes above). Artifact
+`build/openwrt-incremental/output/tessel-21.02-DIAG.bin`, sha256
+`8FFA21F71FFCF1229181CF55CE12C626621912368A93CA1476200976DA256308` (4,981,548 bytes).
+Build-proofs verified: merged kernel `.config` has `CONFIG_MTD_SPLIT_FIRMWARE=y` +
+`CONFIG_GPIO_SYSFS=y`; `mt7620.c` `refclk_grp` trimmed to `FUNC("spi refclk", 0, 37, 1)`
+(pin 37 only); DTB (`image-Tessel.dtb`) has `spi@b40` + `spidev@0` (`compatible="spidev"`) +
+a **bare** `partition@50000` (`label="firmware"`, no `compatible`). CS1 patch applied clean
+(no `.rej`). Handed to parent for flash. Hardware gate = §11.5 **plus** the two
+verify-then-defer probes: (1) does `/dev/spidev1.0` still enumerate at k5.4 (spidev
+warn-but-create holds)? and (2) does `spid` bring up the bridge over sysfs GPIO unchanged?
+If both hold, 21.02 is validated with a near-mechanical delta and the real pivot work
+(spidev whitelist and/or libgpiod) moves to a later, still-single hop.
