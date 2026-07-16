@@ -105,12 +105,20 @@ incrementally.
 | 2 | 18.06 | 4.14 | build-system / feed deltas; spidev **"buggy DT" warning** first appears (k4.14, node still created); **CS1 fix ported to k4.14** (see §12) | ✅ **VALIDATED** *(force-flash; §12.4)* | mechanical + trivial 1-line pinmux port |
 | 3 | 19.07 | 4.14 | same kernel as 18.06 → spidev warning persists (node still created); **same k4.14 CS1 patch drops in unchanged** (see §13); **NEW break: firmware mtdsplit config drop** → re-enable `CONFIG_MTD_SPLIT_FIRMWARE=y` (see §13.2) | ✅ **HARDWARE-VALIDATED** (`b12d0b0`) | mechanical + 1 kernel-config fix |
 | 4 | **21.02** | **5.4** | spidev **refuses** generic compat → **DTS change**; `CONFIG_GPIO_SYSFS` no longer default + **gpiochip base renumber** → begin **libgpiod port**; `urngd` introduced | ⚠️ | **engineering — PIVOT** |
-| 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ⚠️ | medium |
+| 5 | 22.03 | 5.10 | firewall4/nftables default; musl/toolchain bump; ramips **DSA** conversions begin | ✅ **DIAG BUILT** *(hardware-pending; §15)* | mechanical (1 patch) |
 | 6 | 23.05 | 5.15 | stricter spidev; libgpiod effectively mandatory; switch DSA; cmake/toolchain bumps (the `urngd` CRT workaround) | ⚠️ | medium |
-| 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⛔ *(today's failure)* | validates the port |
+| 7 | 24.10 | 6.6 | **sysfs GPIO gone → libgpiod mandatory**; spidev whitelist enforced; bus 0 | ⚠️ | validates the port |
+| 8 | **25.12 (END)** | 6.6 | new end target — **only OpenWrt branch still receiving CVE fixes** in mid-2026 (22.03 EOL Apr-2024, 23.05 EOL Aug-2025, 24.10 EOLs Sep-5-2026) | ⛔ | final validation |
 
 > Kernel↔release mapping per the [OpenWrt version table](https://openwrt.org/releases/table);
 > 24.10 = kernel 6.6.144 confirmed empirically by the parent session.
+> **End target retargeted 24.10 → 25.12** (kernel 6.6): 25.12 (released Mar 2026) is the only
+> actively-maintained branch as of mid-2026. **Rows 4–5 "What newly activates" are the ORIGINAL
+> predictions and have been SUPERSEDED by hardware findings** — see §14 (21.02: the real break was a
+> pinmux DT-binding migration, NOT spidev-refuse/libgpiod, both of which stay deferred) and §15
+> (22.03: mechanical, both deferred breaks still dormant at 5.10). The spidev-hard-refuse and
+> libgpiod ports have NOT yet activated as of validated 21.02 / built 22.03; earliest candidate is
+> now 23.05 (k5.15) → 24.10/25.12 (k6.6).
 
 ### 3.1 Per-hop deviations to hunt for (mapped to the release that introduces them)
 
