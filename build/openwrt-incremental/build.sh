@@ -95,9 +95,33 @@ apply_overlay() {
   fi
 
   # Add a Device/tessel profile to the mt7620 image Makefile (idempotent).
+  #
+  # 21.02 (k5.4) rewrote the ramips image-recipe conventions: the old `DTS :=`
+  # and `DEVICE_TITLE :=` variables were dropped, DTS filenames became
+  # SOC-prefixed, and Device/Default now defaults `DEVICE_DTS = $$(SOC)_$(1)`
+  # (device name). A pre-21.02-style block therefore resolves DEVICE_DTS to
+  # `_tessel` (empty SOC) and the build fails looking for `../dts/_tessel.dts`.
+  # Detect the new convention from the tree and emit the matching block; we keep
+  # our single overlay `Tessel.dts` by setting DEVICE_DTS explicitly.
   local mk="$SRC/target/linux/ramips/image/mt7620.mk"
   if ! grep -q "Device/tessel" "$mk"; then
-    cat >> "$mk" <<'EOF'
+    if grep -qs 'DEVICE_DTS = \$\$(SOC)_' "$SRC/target/linux/ramips/image/Makefile"; then
+      echo "    (21.02+ image-recipe convention detected: SOC/DEVICE_DTS/VENDOR+MODEL)"
+      cat >> "$mk" <<'EOF'
+
+define Device/tessel
+  SOC := mt7620n
+  DEVICE_DTS := Tessel
+  IMAGE_SIZE := 32448k
+  DEVICE_VENDOR := Tessel
+  DEVICE_MODEL := Tessel 2
+  SUPPORTED_DEVICES := tessel,tessel2 tessel tessel2
+  DEVICE_PACKAGES := tessel-tools kmod-spi-dev kmod-usb2 kmod-usb-ohci
+endef
+TARGET_DEVICES += tessel
+EOF
+    else
+      cat >> "$mk" <<'EOF'
 
 define Device/tessel
   DTS := Tessel
@@ -108,6 +132,7 @@ define Device/tessel
 endef
 TARGET_DEVICES += tessel
 EOF
+    fi
     echo "    added Device/tessel to mt7620.mk"
   fi
 
