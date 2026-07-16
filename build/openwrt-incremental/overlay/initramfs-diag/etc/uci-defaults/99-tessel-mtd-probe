@@ -1,0 +1,68 @@
+#!/bin/sh
+# Tessel 24.10 (k6.6) root-mount diagnostic.
+#
+# This runs at boot ONLY in the initramfs (RAM-root) DIAG image, which boots to a
+# shell in RAM and never mounts the on-flash rootfs — so the 24.10 squashfs-on-mtd5
+# non-boot can be probed live instead of panicking.
+#
+# It discriminates the two read paths that behave differently in the failure:
+#   /dev/mtd5      = MTD char device -> mtd_read() directly     (jffs2's route, WORKS on hw)
+#   /dev/mtdblock5 = block device    -> page cache -> blk-mq ->
+#                    mtd_queue_rq -> do_blktrans_request        (squashfs's exact route)
+# If the block path EIOs / returns a different digest than the raw path, the fault is
+# in the k6.6 mtd_blkdevs/blk-mq request handling on the unaligned mtd5 — the smoking gun.
+#
+# Output is echoed to the console so a read-only / lossy serial capture still gets it.
+exec >/dev/console 2>&1
+
+RD=/dev/mtd5
+BD=/dev/mtdblock5
+
+echo ""
+echo "======================================================================"
+echo "======== TESSEL-MTD5-DIAG BEGIN (24.10 k6.6 root-mount probe) ========"
+echo "======================================================================"
+
+echo "[uname]"; uname -a
+echo ""
+echo "[/proc/mtd]"; cat /proc/mtd
+echo ""
+
+echo "[ls /dev/mtd5 /dev/mtdblock5]"; ls -l "$RD" "$BD" 2>&1
+echo ""
+
+echo "[RAW char read] dd if=$RD bs=64k count=1  (mtd_read path)"
+dd if="$RD" bs=64k count=1 2>/tmp/raw.err | md5sum
+echo "  raw dd stderr: $(cat /tmp/raw.err 2>/dev/null)"
+echo ""
+
+echo "[BLOCK read]    dd if=$BD bs=64k count=1  (blk-mq / squashfs path)"
+dd if="$BD" bs=64k count=1 2>/tmp/blk.err | md5sum
+echo "  blk dd stderr: $(cat /tmp/blk.err 2>/dev/null)"
+echo ""
+
+echo "[BLOCK read superblock only] dd if=$BD bs=4k count=1"
+dd if="$BD" bs=4k count=1 2>/tmp/blk4.err | md5sum
+echo "  blk4 dd stderr: $(cat /tmp/blk4.err 2>/dev/null)"
+echo ""
+
+echo "[squashfs magic check @ raw mtd5 offset 0]"
+dd if="$RD" bs=4 count=1 2>/dev/null | od -An -tx1 | head -1
+echo ""
+
+echo "[explicit squashfs mount] mount -t squashfs -o ro $BD /mnt"
+mkdir -p /mnt
+mount -t squashfs -o ro "$BD" /mnt
+echo "  mount rc=$?"
+ls /mnt 2>/dev/null | head -20
+umount /mnt 2>/dev/null
+
+echo ""
+echo "[dmesg: mtd|squash|spi-nor|error|eio|blk|bio]"
+dmesg | grep -iE 'squash|mtdblock|spi-nor|s25fl|erase|error|eio|blk|bio|mtd' | tail -50
+
+echo ""
+echo "======================================================================"
+echo "======== TESSEL-MTD5-DIAG END — interactive shell follows =============="
+echo "======================================================================"
+exit 0

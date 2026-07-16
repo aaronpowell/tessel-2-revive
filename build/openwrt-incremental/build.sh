@@ -195,8 +195,29 @@ EOF
     cp -a "$OVERLAY/files/." "$SRC/files/"
     chmod 0755 "$SRC/files/etc/uci-defaults/"* 2>/dev/null || true
   fi
+  # Initramfs boot-diagnostic overlay: an auto-running mtd5 read/mount probe. Baked
+  # only for the RAM-root initramfs image so its output prints on the boot console.
+  if [[ "${TESSEL_INITRAMFS:-0}" == "1" && -d "$OVERLAY/initramfs-diag" ]]; then
+    echo "==> TESSEL_INITRAMFS=1: baking mtd5 root-mount probe overlay ..."
+    mkdir -p "$SRC/files"
+    cp -a "$OVERLAY/initramfs-diag/." "$SRC/files/"
+    chmod 0755 "$SRC/files/etc/uci-defaults/"* 2>/dev/null || true
+  fi
 
   cp "$OVERLAY/config.seed" "$SRC/.config"
+  # Optional: additionally emit an initramfs (RAM-root) kernel for boot diagnostics.
+  # With this on, OpenWrt builds a *-initramfs-kernel.bin whose root filesystem is
+  # embedded in the kernel and unpacked into RAM, so the board boots to a shell
+  # WITHOUT mounting the on-flash rootfs. That lets a broken on-flash root mount
+  # (e.g. the 24.10 squashfs-on-mtd5 non-boot) be probed live from a shell. The
+  # squashfs sysupgrade image is still built alongside, so its rootfs can be
+  # appended to the initramfs kernel to reproduce the exact mtd5 geometry.
+  # Gated behind TESSEL_INITRAMFS so normal validation images stay unchanged.
+  if [[ "${TESSEL_INITRAMFS:-0}" == "1" ]]; then
+    echo "==> TESSEL_INITRAMFS=1: enabling CONFIG_TARGET_ROOTFS_INITRAMFS=y"
+    sed -i '/CONFIG_TARGET_ROOTFS_INITRAMFS[ =]/d' "$SRC/.config"
+    echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y" >> "$SRC/.config"
+  fi
   make defconfig
   echo "==> Effective device selection:"
   grep -E "DEVICE_tessel|PACKAGE_tessel-tools|PACKAGE_kmod-spi-dev" "$SRC/.config" || true
