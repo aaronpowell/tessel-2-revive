@@ -868,3 +868,68 @@ verify-then-defer probes: (1) does `/dev/spidev1.0` still enumerate at k5.4 (spi
 warn-but-create holds)? and (2) does `spid` bring up the bridge over sysfs GPIO unchanged?
 If both hold, 21.02 is validated with a near-mechanical delta and the real pivot work
 (spidev whitelist and/or libgpiod) moves to a later, still-single hop.
+
+### 14.3 Hop 4 (21.02) FIRST HARDWARE VERDICT — a NEW pinmux break localized (pinctrl DT-binding migration)
+
+First 21.02 flash (sha `8FFA21F7…`) **boots and gets most of the way**, and the two
+verify-then-defer probes came back exactly as scoped — but `spid` then **crash-loops on a GPIO
+export**, localizing a *third* k5.4 break we had not predicted.
+
+**What PASSED on hardware** (21.02.7 r16847 / uname 5.4.238):
+- firmware SPLITS: `cat /proc/mtd` → `mtd3 firmware` + `mtd4 kernel` + `mtd5 rootfs` + `mtd6 rootfs_data` (`CONFIG_MTD_SPLIT_FIRMWARE` default confirmed on hardware) — §14.1 row 3 holds.
+- **Probe (1) spidev:** `/dev/spidev1.0` **enumerates** at k5.4 (crw 153,0); the "buggy DT: spidev listed directly in DT" stays a **non-fatal WARN** → the spidev whitelist **stays deferred**, as scoped (§14.1 row 1 holds).
+- CS1 init clean: `spi spi0.0` + `spi spi1.0 force spi mode3`, **zero** `spi_device register error` → the `patches-5.4` CS1 port works.
+- sysfs GPIO present: `ls /sys/class/gpio` → `export unexport gpiochip0 gpiochip24 gpiochip40 gpiochip72` (`CONFIG_GPIO_SYSFS=y` confirmed) — §14.1 row 2 premise (sysfs GPIO intact) holds.
+
+**What FAILED — `spid` cannot export the coprocessor GPIOs:**
+```
+spid[1503]: Starting
+spid[1503]: GPIO export write: Invalid argument        (local1.crit, repeats)
+procd: Instance spid::instance1 is in a crash loop
+kernel: rt2880-pinmux pinctrl: pin 2 is not set to gpio mux status -22   (-22 = EINVAL)
+```
+`spid` exports the coprocessor SYNC=`gpio1` and IRQ=`gpio2` via legacy sysfs
+`/sys/class/gpio/export`; the write fails EINVAL because **pins 1 & 2 (the mt7620 `i2c`
+pinmux group) are not muxed to the `gpio` function** at runtime.
+
+**Root cause (pinned to source — a DT-binding migration, NOT sysfs-GPIO removal):**
+The ramips `rt2880` pinmux driver changed how it parses the pinmux state node between our hops:
+- **≤19.07 (k4.14):** the OpenWrt-added driver (`patches-4.14/0025-pinctrl-ralink-add-pinctrl-driver.patch`, at `drivers/pinctrl/pinctrl-rt2880.c`) ships its **own** `dt_node_to_map` (`rt2880_pinctrl_dt_subnode_to_map`) that reads the **ralink-specific** `ralink,group` / `ralink,function` properties.
+- **21.02 (k5.4):** the driver moved upstream to `drivers/staging/mt7621-pinctrl/pinctrl-rt2880.c` (no `0025-*` patch) and **switched `.dt_node_to_map` to the generic `pinconf_generic_dt_node_to_map_all`**, which reads the **standard** `groups` / `function` properties and **ignores `ralink,*`**. Accordingly, `mt7620n.dtsi`'s own pinmux subnodes were migrated `ralink,group`/`ralink,function` → `groups`/`function`.
+
+Our overlay `Tessel.dts` `state_default` (which muxes the `i2c` group — among others — to `gpio`)
+still used the **legacy** `ralink,group`/`ralink,function` spelling. At 5.4 the generic parser
+therefore produced **zero** mux maps for our default state → the `i2c` group was never muxed to
+`gpio` → the driver's `p->gpio[2]` stayed `0` → `rt2880_pmx_group_gpio_request_enable()` rejects
+the pin-2 gpio request with EINVAL → `spid` crash-loops. (The built DTB *looked* correct under
+`dtc`; the bug is purely in which property the runtime parser consumes — the same
+"correct-DTB ≠ correct-runtime" trap as the 19.07 `denx,uimage` regression.)
+
+**Fix (lever A — a single, all-hop-safe DTS delta):** the `state_default` `default` node now
+carries **both** spellings — `ralink,group`+`ralink,function` **and** `groups`+`function`:
+```
+&pinctrl {
+	state_default: pinctrl0 {
+		default {
+			ralink,group = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			ralink,function = "gpio";
+			groups = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			function = "gpio";
+		};
+	};
+};
+```
+Each parser reads its own spelling and ignores the other, so the one overlay `Tessel.dts` stays
+correct on **every** hop (≤19.07 uses `ralink,*`; 21.02+ uses `groups`/`function`). No
+version-gating, no second DTS. This is the mt7620 analogue of the well-known upstream
+`ralink,group`→`groups` transitional dual-binding.
+
+**Status: 21.02 DIAG REBUILT ✅** (world exit 0, DTS-only incremental). Artifact
+`build/openwrt-incremental/output/tessel-21.02-DIAG.bin`, sha256
+`9FC9F5650E251FE6FEA6719C8D8EC4228955878CEE80DE6AB561AE54A9B8E6EE` (4,981,548 bytes; supersedes
+the broken `8FFA21F7…`). Build-proof: decompiled `image-Tessel.dtb` `state_default/default` now
+carries **both** `ralink,group`/`ralink,function` **and** `groups`/`function` = `"gpio"`; no
+`.rej`. Handed to parent. **Hardware gate:** `spid` no longer crash-loops
+(`pgrep -l spid`/`usbexecd` present), the coprocessor pins export cleanly
+(`echo 2 > /sys/class/gpio/export` succeeds; no `pin 2 is not set to gpio mux`), and
+host `t2 list --usb` → `USB␉OpenWrt`.

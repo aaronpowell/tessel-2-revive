@@ -152,11 +152,29 @@
 	ralink,mtd-eeprom = <&factory 0>;
 };
 
+/*
+ * Mux the peripheral pin groups we drive as GPIO (notably the "i2c" group,
+ * pins 1 & 2 = the coprocessor SYNC/IRQ lines that spid exports via sysfs).
+ *
+ * BOTH property spellings are supplied deliberately, because the ramips
+ * rt2880 pinmux driver changed how it parses this node across our hop range:
+ *   - <=19.07 (k<=4.14): the driver ships its own dt_node_to_map that reads the
+ *     ralink-specific `ralink,group` / `ralink,function` properties.
+ *   - 21.02+ (k5.4, driver moved to drivers/staging/mt7621-pinctrl): dt_node_to_map
+ *     was switched to the GENERIC pinconf_generic_dt_node_to_map_all, which reads
+ *     the standard `groups` / `function` properties and IGNORES `ralink,*`.
+ * Carrying both keeps this single overlay DTS correct on every hop: each parser
+ * reads its own spelling and ignores the other. Without the generic spelling the
+ * i2c group is never muxed to gpio at 5.4, so spid's `echo 2 > .../export` fails
+ * with `pin 2 is not set to gpio mux` (EINVAL) and the bridge crash-loops.
+ */
 &pinctrl {
 	state_default: pinctrl0 {
 		default {
 			ralink,group = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
 			ralink,function = "gpio";
+			groups = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			function = "gpio";
 		};
 	};
 };
