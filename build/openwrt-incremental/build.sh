@@ -29,6 +29,7 @@ feed_branch() {
     v22.03.*) echo "openwrt-22.03" ;;
     v23.05.*) echo "openwrt-23.05" ;;
     v24.10.*) echo "openwrt-24.10" ;;
+    v25.12.*) echo "openwrt-25.12" ;;
     *)        echo "master" ;;
   esac
 }
@@ -42,7 +43,8 @@ kernel_patch_dir() {
     v21.02.*)          echo "patches-5.4" ;;
     v22.03.*)          echo "patches-5.10" ;;
     v23.05.*)          echo "patches-5.15" ;;
-    v24.10.*|v25.12.*) echo "patches-6.6" ;;
+    v24.10.*)          echo "patches-6.6" ;;
+    v25.12.*)          echo "patches-6.12" ;;
     *)                 echo "" ;;
   esac
 }
