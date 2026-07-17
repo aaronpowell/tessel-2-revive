@@ -43,11 +43,21 @@
 #   docker compose run --rm --entrypoint bash build -lc "bash /artifacts/extract-node8-payload.sh"
 # Inputs:
 #   * a built 19.07 tree with node 8.11.3 (TREE, default /work/openwrt-v19.07.10)
-#   * the node-8 JS at $JSDIR (default /artifacts/node8-js/{tessel,tessel-export}.js)
+#   * the node-8 JS at $JSDIR — defaults to the tracked in-repo scripts/tessel-node8-js
+#     (baked into the image as /overlay-scripts/tessel-node8-js), else /artifacts/node8-js
 # Output: $OUT (default /artifacts/tessel-node8-payload.tar.gz)
 set -euo pipefail
 
 TREE="${TREE:-/work/openwrt-v19.07.10}"
+# node-8 tessel runtime JS (t2-firmware a22ba2d2, with the k6.12 LED-path fix
+# /sys/class/leds/tessel:). Prefer the tracked in-repo copy (baked into the image
+# under /overlay-scripts, or found next to this script), so a fresh checkout+build
+# reproduces the fixed runtime without re-staging; fall back to the /artifacts copy.
+if [[ -z "${JSDIR:-}" ]]; then
+  for _c in /overlay-scripts/tessel-node8-js "$(dirname "$0")/tessel-node8-js" /artifacts/node8-js; do
+    if [[ -f "$_c/tessel-export.js" && -f "$_c/tessel.js" ]]; then JSDIR="$_c"; break; fi
+  done
+fi
 JSDIR="${JSDIR:-/artifacts/node8-js}"
 OUT="${OUT:-/artifacts/tessel-node8-payload.tar.gz}"
 WORK="${WORK:-/work/prod-node8}"

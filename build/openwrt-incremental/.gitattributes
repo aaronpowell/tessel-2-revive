@@ -7,3 +7,5 @@ spid-start text eol=lf
 usbexecd-start text eol=lf
 *.dts  text eol=lf
 config.seed text eol=lf
+# node-8 tessel runtime JS is consumed inside the Linux build container.
+scripts/tessel-node8-js/*.js text eol=lf
