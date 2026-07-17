@@ -15,6 +15,22 @@ This repository is optimised for agent-assisted iteration. Read these files in o
 
 The forked repos are included as git submodules under [`repos/`](repos/).
 
+### OpenWrt 25.12 uplift & production firmware
+
+The board has been brought forward from its 2016 OpenWrt 15.05 (Chaos Calmer)
+factory image all the way to **OpenWrt 25.12.5 / kernel 6.12.94**, with an
+on-device **Node.js 8.11.3** runtime and the Tessel JS library — fully
+hardware-validated (`t2 run` blinks the LEDs). See:
+
+- [`docs/production-image-and-release.md`](docs/production-image-and-release.md) —
+  **start here for the production image**: what's in it, how to build/flash/validate, `/etc/tessel-release`, and how to cut a release
+- [`docs/openwrt-incremental-upgrade.md`](docs/openwrt-incremental-upgrade.md) —
+  the per-hop 15.05 → 25.12 root-cause roadmap (every break + fix, pinned to source)
+- [`docs/openwrt-upgrade-progress.md`](docs/openwrt-upgrade-progress.md) —
+  the narrative journey and lessons learned
+- [`build/openwrt-incremental/`](build/openwrt-incremental/) — the containerised
+  build system (Dockerfile, `build.sh`, the Tessel DTS/patches/overlay, and the node-8 payload scripts)
+
 ### Cloning on Windows
 
 `repos/openwrt` and `repos/uboot-mt7620` are marked `update = none` — they are large, Linux-only build inputs and are skipped automatically by `git clone --recurse-submodules` on Windows. A standard clone gives you everything needed for CLI and firmware work:
