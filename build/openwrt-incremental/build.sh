@@ -109,6 +109,18 @@ apply_overlay() {
   # fs" at boot. It is a KERNEL config symbol (lives in the target kernel config
   # fragment, not the top-level OpenWrt .config), so it must be injected here —
   # a seed entry is silently dropped by `make defconfig`.
+  #
+  # Also ensure in-kernel MIPS FP support/emulation is present. OpenWrt's
+  # generic config-6.12 ships `# CONFIG_MIPS_FP_SUPPORT is not set` because its
+  # own userspace is 100% soft-float and needs no FPU. The Tessel's MT7620 24KEc
+  # core has NO hardware FPU, so with FP support stripped EVERY userspace `cop1`
+  # (hardware-FP) instruction traps -> SIGILL. Node is soft-float, but V8's JIT
+  # emits cop1 at RUNTIME for JS Numbers (doubles) regardless of the compile-time
+  # float ABI, so it needs the in-kernel FP emulator. The original Tessel 15.05
+  # firmware ran node 4.2.1 only because its kernel had FP emulation on.
+  # CONFIG_MIPS_FP_SUPPORT=y builds the emulator; V8's cop1 then traps+emulates.
+  # Same injection lesson as MTD_SPLIT_FIRMWARE: a seed/.config entry is dropped
+  # by `make defconfig`, so it must land in the target kernel fragment.
   if [[ -n "$kpd" ]]; then
     local kver="${kpd#patches-}"          # patches-4.14 -> 4.14
     local kcfg
@@ -118,6 +130,9 @@ apply_overlay() {
         sed -i '/CONFIG_MTD_SPLIT_FIRMWARE[ =]/d' "$kcfg"
         echo "CONFIG_MTD_SPLIT_FIRMWARE=y" >> "$kcfg"
         echo "    ensured CONFIG_MTD_SPLIT_FIRMWARE=y in ${kcfg#$SRC/}"
+        sed -i '/CONFIG_MIPS_FP_SUPPORT[ =]/d' "$kcfg"
+        echo "CONFIG_MIPS_FP_SUPPORT=y" >> "$kcfg"
+        echo "    ensured CONFIG_MIPS_FP_SUPPORT=y in ${kcfg#$SRC/} (kernel FP emulator for V8 cop1)"
         break
       fi
     done
