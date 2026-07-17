@@ -55,7 +55,8 @@ RUN apt-get update \
 
 COPY build.sh /usr/local/bin/build.sh
 COPY overlay /overlay
-RUN chmod +x /usr/local/bin/build.sh
+COPY scripts /overlay-scripts
+RUN chmod +x /usr/local/bin/build.sh /overlay-scripts/*.sh 2>/dev/null || true
 
 ENTRYPOINT ["/usr/local/bin/build.sh"]
 CMD ["build"]

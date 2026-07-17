@@ -206,6 +206,41 @@ EOF
     chmod 0755 "$SRC/files/etc/uci-defaults/"* 2>/dev/null || true
   fi
 
+  # Production Node/Tessel runtime overlay. Bakes the factory Node 4.2.1 + its
+  # uClibc closure + the tessel-export JS runtime into the rootfs via OpenWrt's
+  # files/ mechanism. The payload tarball is prebuilt (extracted from the factory
+  # RESTORE image and self-contained) and delivered via /artifacts (output/); it
+  # is NOT committed to git (large binaries). Regenerate it with
+  # scripts/extract-node-payload.sh if the factory image changes.
+  #
+  # Layout the payload lays down (see extract-node-payload.sh for the why):
+  #   /lib/ld-uClibc.so.0        node's PT_INTERP loader (distinct soname; no musl clash)
+  #   /opt/tessel/bin/node       unmodified factory node 4.2.1 (uClibc, sstripped)
+  #   /opt/tessel/lib/*.so*      full uClibc dependency closure (incl. libssl/crypto 1.0.0,
+  #                              libstdc++.so.6 / libz.so.1 — the only sonames that also
+  #                              exist as musl builds in /usr/lib, hence the isolation)
+  #   /usr/bin/node              wrapper: sets LD_LIBRARY_PATH=/opt/tessel/lib (searched
+  #                              before /lib:/usr/lib -> uClibc libs win, no ABI clash) and
+  #                              NODE_PATH=/usr/lib/node (execPath-derived global path would
+  #                              otherwise miss the runtime). usbexecd execs `node` on PATH.
+  #   /usr/lib/node/{tessel,tessel-export}.js   the on-device tessel runtime module
+  # patchelf was NOT usable (the factory ELFs are sstripped -> no section headers), so the
+  # loader path is left native and isolation is done via LD_LIBRARY_PATH instead.
+  if [[ "${TESSEL_PROD:-0}" == "1" ]]; then
+    local payload="${TESSEL_NODE_PAYLOAD:-/artifacts/tessel-node-payload.tar.gz}"
+    if [[ ! -f "$payload" ]]; then
+      echo "ERROR: TESSEL_PROD=1 but node payload not found at $payload" >&2
+      echo "       Build it first: scripts/extract-node-payload.sh (needs the factory tarball)." >&2
+      exit 1
+    fi
+    echo "==> TESSEL_PROD=1: baking Node 4.2.1 + tessel runtime from $payload ..."
+    mkdir -p "$SRC/files"
+    tar xzpf "$payload" -C "$SRC/files"
+    chmod 0755 "$SRC/files/usr/bin/node" "$SRC/files/opt/tessel/bin/node"
+    echo "    node payload baked:"
+    ls -l "$SRC/files/opt/tessel/bin/node" "$SRC/files/usr/bin/node" | sed 's/^/      /'
+  fi
+
   cp "$OVERLAY/config.seed" "$SRC/.config"
   # Optional: additionally emit an initramfs (RAM-root) kernel for boot diagnostics.
   # With this on, OpenWrt builds a *-initramfs-kernel.bin whose root filesystem is
@@ -215,10 +250,19 @@ EOF
   # squashfs sysupgrade image is still built alongside, so its rootfs can be
   # appended to the initramfs kernel to reproduce the exact mtd5 geometry.
   # Gated behind TESSEL_INITRAMFS so normal validation images stay unchanged.
+  # NOTE: `make defconfig` DEFAULTS CONFIG_TARGET_ROOTFS_INITRAMFS=y for this
+  # ramips/mt7620 target (the seed carries no INITRAMFS symbol), which bakes the
+  # rootfs into the kernel and yields a RAM-root image instead of a flashable
+  # squashfs production image. So the symbol must be set EXPLICITLY either way:
+  # force it on for the DIAG probe path, force it OFF (with an explicit
+  # "is not set", which survives defconfig) for every normal/production image.
+  sed -i '/CONFIG_TARGET_ROOTFS_INITRAMFS[ =]/d' "$SRC/.config"
   if [[ "${TESSEL_INITRAMFS:-0}" == "1" ]]; then
     echo "==> TESSEL_INITRAMFS=1: enabling CONFIG_TARGET_ROOTFS_INITRAMFS=y"
-    sed -i '/CONFIG_TARGET_ROOTFS_INITRAMFS[ =]/d' "$SRC/.config"
     echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y" >> "$SRC/.config"
+  else
+    echo "==> disabling CONFIG_TARGET_ROOTFS_INITRAMFS (flashable squashfs image)"
+    echo "# CONFIG_TARGET_ROOTFS_INITRAMFS is not set" >> "$SRC/.config"
   fi
   make defconfig
   echo "==> Effective device selection:"
