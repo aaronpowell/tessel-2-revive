@@ -31,5 +31,35 @@ while [ $i -lt 30 ]; do
 done
 [ -z "$SPIDEV" ] && SPIDEV=/dev/spidev1.0
 
-# IRQ GPIO = 2, SYNC GPIO = 1 (global sysfs numbers; valid while gpiochip base is 0).
-exec spid "$SPIDEV" 2 1 /var/run/tessel
+# Resolve the sysfs GPIO numbers for the coprocessor IRQ and SYNC handshake lines.
+#
+# spid drives two coprocessor lines over the legacy /sys/class/gpio interface,
+# addressed by GLOBAL sysfs GPIO number. Historically the MT7620 SoC GPIO bank 0
+# registered at base 0, so the coprocessor IRQ was global 2 and SYNC global 1
+# (hardware offsets 2 and 1 within bank 0).
+#
+# From kernel 6.6 the ramips gpio-ralink driver was rewritten onto bgpio_init(),
+# which sets gc->base = -1 (dynamic allocation) and ignores the DT ralink,gpio-base
+# property. Bank 0 no longer lands at base 0, so the fixed numbers 2/1 address
+# nothing and `echo 2 > /sys/class/gpio/export` fails with "invalid GPIO 2",
+# crash-looping spid. The hardware OFFSETS (2 and 1) within bank 0 are unchanged;
+# only the bank base moved. So resolve bank 0's base at runtime and add the
+# offsets. Bank 0 is the gpiochip whose label ends in "600.gpio" (the SoC GPIO
+# controller at register 0x600, ngpios=24, which owns the coprocessor lines).
+# When the base is 0 (every hop <= 23.05) this yields exactly 2 and 1, so it is
+# all-hop-safe with no version gating.
+GPIO_IRQ=2
+GPIO_SYNC=1
+for _gc in /sys/class/gpio/gpiochip*; do
+    [ -r "$_gc/label" ] && [ -r "$_gc/base" ] || continue
+    case "$(cat "$_gc/label")" in
+        *600.gpio)
+            _base="$(cat "$_gc/base")"
+            GPIO_IRQ=$((_base + 2))
+            GPIO_SYNC=$((_base + 1))
+            break
+            ;;
+    esac
+done
+
+exec spid "$SPIDEV" "$GPIO_IRQ" "$GPIO_SYNC" /var/run/tessel

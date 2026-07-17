@@ -1,0 +1,70 @@
+Tessel 2 / MT7620: reset the shared SPI block only once (k6.6 regression fix).
+
+THE 24.10 (kernel 6.6) HARD NON-BOOT ROOT CAUSE.
+
+The MT7620 has TWO SPI controllers -- spi0: spi@b00 (the s25fl256s boot flash) and
+spi1: spi@b40 (the Tessel SAMD21 coprocessor, CS1). In the device tree they share a
+SINGLE reset line: both nodes carry resets=<&rstctrl 18> / reset-names="spi".
+
+OpenWrt out-of-tree spi-rt2880 driver (patch 821) was refactored to devm APIs for 6.6
+and in the process DROPPED the guard the pre-6.6 driver used around the one-time
+hardware reset. The 5.15 driver reset the shared block only on the first probe (atomic
+hw_reset_count == 1); the 6.6 driver calls device_reset() UNCONDITIONALLY on every
+probe. device_reset() acquires an *exclusive* reset control and always pulses it, so
+with two controllers on one shared reset line the boot sequence is:
+
+  1. spi@b00 (flash) probes -> device_reset() pulses the shared SPI reset -> the flash
+     controller is initialised and spi-nor read_id() succeeds (dmesg shows
+     "s25fl256s1 (32768 Kbytes)"); the flash is briefly usable.
+  2. spi@b40 (coprocessor) probes -> device_reset() pulses the SAME shared reset a
+     SECOND time, AFTER the flash controller is already up -- wiping its mode3 / SPI
+     arbiter configuration.
+
+From then on every read on the flash controller clocks against a reset/idle block:
+MISO idles high, so *all* /dev/mtdN data reads return 0xFF (address-independent).
+u-boot reads the flash fine (no double-reset) so the kernel uImage loads; but once
+Linux is up the squashfs superblock read returns 0xFF -> no hsqs magic -> squashfs
+fill_super never runs (silent, no "SQUASHFS error") -> jffs2 fallback finds no nodes
+-> "VFS: Cannot open root device ... error -5" -> panic -> reboot loop. The rt2800
+wifi "Invalid RF chipset 0x0000" is the same fault (0xFF EEPROM read).
+
+Hardware-pinned via an initramfs RAM-root DIAG: md5 of every /dev/mtdN read equalled
+md5(0xFF), address-independent, while u-boot and the JEDEC probe worked.
+
+FIX: restore the pre-6.6 behaviour -- reset the shared SPI block exactly once, on the
+first controller to probe. Minimal delta; mirrors the driver hardware-validated at
+15.05..23.05.
+--- a/drivers/spi/spi-rt2880.c
++++ b/drivers/spi/spi-rt2880.c
+@@ -403,6 +403,8 @@
+ 	return 0;
+ }
+ 
++static atomic_t hw_reset_count = ATOMIC_INIT(0);
++
+ static int rt2880_spi_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -442,9 +444,19 @@
+ 	rs->base = base;
+ 	rs->clk = clk;
+ 
+-	ret = device_reset(&pdev->dev);
+-	if (ret)
+-		return ret;
++	/*
++	 * MT7620 has two SPI controllers (spi@b00 flash, spi@b40 coprocessor)
++	 * sharing one reset line (rstctrl bit 18). device_reset() pulses an
++	 * exclusive reset unconditionally, so without this guard the second
++	 * probe re-resets the shared block after the flash controller is up,
++	 * wiping its config -> every flash read returns 0xFF. Reset the shared
++	 * block exactly once, on the first probe, like the pre-6.6 driver.
++	 */
++	if (atomic_inc_return(&hw_reset_count) == 1) {
++		ret = device_reset(&pdev->dev);
++		if (ret)
++			return ret;
++	}
+ 
+ 	return devm_spi_register_master(dev, master);
+ }
