@@ -262,6 +262,33 @@ EOF
     chmod 0755 "$SRC/files/usr/bin/node" "$SRC/files/opt/tessel/bin/node"
     echo "    node payload baked:"
     ls -l "$SRC/files/opt/tessel/bin/node" "$SRC/files/usr/bin/node" | sed 's/^/      /'
+
+    # Release marker: a shell-sourceable /etc/tessel-release so multiple releases
+    # built on the SAME OpenWrt base (identical kernel + node + closure + JS) are
+    # still distinguishable on-device and by filename. RELEASE is parameterized via
+    # TESSEL_RELEASE (a one-flag bump for a future r2/r3); BUILD_DATE + GIT_COMMIT are
+    # computed at build time. GIT_COMMIT prefers TESSEL_GIT_COMMIT (the tessel-2-revive
+    # repo sha, passed from the host since that tree isn't mounted in the container),
+    # then falls back to the OpenWrt build tree's HEAD, then "unknown". The version
+    # triplet is fixed to this build's known-good values.
+    mkdir -p "$SRC/files/etc"
+    local rel="${TESSEL_RELEASE:-v25.12.5-node8-r1}"
+    local bdate; bdate="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local gcommit="${TESSEL_GIT_COMMIT:-}"
+    if [[ -z "$gcommit" ]]; then
+      gcommit="$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    fi
+    cat > "$SRC/files/etc/tessel-release" <<EOF
+RELEASE="$rel"
+BUILD_DATE="$bdate"
+GIT_COMMIT="$gcommit"
+OPENWRT_VERSION="25.12.5"
+KERNEL_VERSION="6.12.94"
+NODE_VERSION="8.11.3"
+TESSEL_RUNTIME="t2-firmware@a22ba2d2"
+EOF
+    echo "    /etc/tessel-release baked:"
+    sed 's/^/      /' "$SRC/files/etc/tessel-release"
   fi
 
   cp "$OVERLAY/config.seed" "$SRC/.config"
