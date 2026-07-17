@@ -1,0 +1,65 @@
+#!/bin/sh
+# spid-start — launch the SPI bridge daemon.
+#
+# The Tessel coprocessor is the ONLY spidev on the bus (the SPI-NOR flash uses
+# the m25p80/spi-nor driver, which does not create a /dev/spidev node). On the
+# upstream two-controller model it enumerates as /dev/spidev1.0 (spi@b40, bus 1,
+# CS0); on other kernels the bus number may differ. So just pick the first
+# /dev/spidev* node that exists rather than hard-coding bus/CS numbers.
+mkdir -p /var/run/tessel
+ln -sf /var/run/tessel/1 /var/run/tessel/port_a
+ln -sf /var/run/tessel/2 /var/run/tessel/port_b
+
+# Wait for the spidev node to appear before launching spid.
+#
+# From 22.03 (kernel 5.10) onward spidev is built as a LOADABLE MODULE, which the
+# kernel auto-loads ~13s into boot — AFTER this START=60 procd service first runs.
+# Without a wait, spid-start finds no /dev/spidev* yet, falls back to a node that
+# doesn't exist, and `spid` exits immediately; procd respawns it a few times, hits
+# the respawn throttle, and GIVES UP PERMANENTLY before the module ever loads
+# (symptom: POWER LED blinks forever, pgrep spid/usbexecd empty, but a manual
+# `/etc/init.d/spid start` later works fine). At <=21.02 spidev was built-in and
+# present at boot, so the loop below passes on the first iteration — this is
+# all-hop-safe and deterministic (preferred over bumping procd respawn retries).
+SPIDEV=""
+i=0
+while [ $i -lt 30 ]; do
+    SPIDEV="$(ls /dev/spidev* 2>/dev/null | head -n1)"
+    [ -n "$SPIDEV" ] && break
+    sleep 1
+    i=$((i + 1))
+done
+[ -z "$SPIDEV" ] && SPIDEV=/dev/spidev1.0
+
+# Resolve the sysfs GPIO numbers for the coprocessor IRQ and SYNC handshake lines.
+#
+# spid drives two coprocessor lines over the legacy /sys/class/gpio interface,
+# addressed by GLOBAL sysfs GPIO number. Historically the MT7620 SoC GPIO bank 0
+# registered at base 0, so the coprocessor IRQ was global 2 and SYNC global 1
+# (hardware offsets 2 and 1 within bank 0).
+#
+# From kernel 6.6 the ramips gpio-ralink driver was rewritten onto bgpio_init(),
+# which sets gc->base = -1 (dynamic allocation) and ignores the DT ralink,gpio-base
+# property. Bank 0 no longer lands at base 0, so the fixed numbers 2/1 address
+# nothing and `echo 2 > /sys/class/gpio/export` fails with "invalid GPIO 2",
+# crash-looping spid. The hardware OFFSETS (2 and 1) within bank 0 are unchanged;
+# only the bank base moved. So resolve bank 0's base at runtime and add the
+# offsets. Bank 0 is the gpiochip whose label ends in "600.gpio" (the SoC GPIO
+# controller at register 0x600, ngpios=24, which owns the coprocessor lines).
+# When the base is 0 (every hop <= 23.05) this yields exactly 2 and 1, so it is
+# all-hop-safe with no version gating.
+GPIO_IRQ=2
+GPIO_SYNC=1
+for _gc in /sys/class/gpio/gpiochip*; do
+    [ -r "$_gc/label" ] && [ -r "$_gc/base" ] || continue
+    case "$(cat "$_gc/label")" in
+        *600.gpio)
+            _base="$(cat "$_gc/base")"
+            GPIO_IRQ=$((_base + 2))
+            GPIO_SYNC=$((_base + 1))
+            break
+            ;;
+    esac
+done
+
+exec spid "$SPIDEV" "$GPIO_IRQ" "$GPIO_SYNC" /var/run/tessel

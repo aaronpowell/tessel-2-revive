@@ -1,0 +1,186 @@
+/dts-v1/;
+
+#include "mt7620n.dtsi"
+
+/ {
+	compatible = "tessel,tessel2", "wrtnode", "ralink,mt7620n-soc";
+	model = "Tessel 2";
+
+	chosen {
+		bootargs = "console=ttyS0,115200";
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		wlan {
+			label = "tessel:amber:wlan";
+			gpios = <&gpio3 0 1>;
+		};
+		error {
+			label = "tessel:red:error";
+			gpios = <&gpio0 17 0>;
+		};
+		user1 {
+			label = "tessel:green:user1";
+			gpios = <&gpio0 0 0>;
+		};
+		user2 {
+			label = "tessel:blue:user2";
+			gpios = <&gpio1 14 0>;
+		};
+	};
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpio3 {
+	status = "okay";
+};
+
+&spi0 {
+	status = "okay";
+
+	m25p80@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <20000000>;
+
+		partition@0 {
+			label = "u-boot";
+			reg = <0x0 0x30000>;
+			read-only;
+		};
+
+		partition@30000 {
+			label = "u-boot-env";
+			reg = <0x30000 0x10000>;
+			read-only;
+		};
+
+		factory: partition@40000 {
+			label = "factory";
+			reg = <0x40000 0x10000>;
+			read-only;
+		};
+
+		/*
+		 * Firmware partition — deliberately declared WITHOUT a `compatible`.
+		 * OpenWrt splits it into kernel + rootfs at boot via the NAME-BASED
+		 * mechanism (drivers/mtd/mtdpart.c mtd_partition_split -> split_firmware,
+		 * patch generic/pending-4.14/402-*). That path fires only when ALL of:
+		 *   - CONFIG_MTD_SPLIT_FIRMWARE=y   (injected by build.sh into the mt7620
+		 *                                    kernel config fragment — 18.06's
+		 *                                    defconfig had it =y; 19.07 dropped
+		 *                                    it, and it is a KERNEL symbol so a
+		 *                                    top-level .config seed entry is
+		 *                                    dropped by `make defconfig`)
+		 *   - partition name == "firmware"  (SPLIT_FIRMWARE_NAME)
+		 *   - the node has NO "compatible"  (!of_find_property(...,"compatible"))
+		 *
+		 * A `compatible = "denx,uimage"` here is DOUBLY wrong on our layout:
+		 *   (1) our partitions are bare children of the flash node (no
+		 *       `partitions { compatible = "fixed-partitions"; ... }` wrapper),
+		 *       and a bare child that carries a compatible is skipped by the
+		 *       fixed-partitions parser -> the firmware partition VANISHES
+		 *       entirely (hardware-observed: "3 MTD partitions", no firmware);
+		 *   (2) even if enumerated, the compatible trips the !compatible guard
+		 *       above and disables the name-based split.
+		 * The DT-driven denx,uimage path needs the fixed-partitions wrapper and
+		 * is deferred to whichever later hop actually removes the name-based
+		 * split upstream. Until then, keep this bare (matches proven 17.01/18.06).
+		 */
+		partition@50000 {
+			label = "firmware";
+			reg = <0x50000 0x1fb0000>;
+		};
+	};
+};
+
+/*
+ * Coprocessor bridge SPI slave (the SAMD21).
+ *
+ * On the Tessel factory 3.18 kernel this lived as spidev@1 (chip-select 1) under
+ * the single spi@b00 controller, which relied on an out-of-tree Ralink SPI
+ * master that exposed two chip-selects on one controller. Upstream OpenWrt/LEDE
+ * re-expressed the MT7620's second chip-select as a *separate* SPI controller,
+ * spi1: spi@b40 (bus 1), arbitrated against spi0 via the shared SPI arbiter.
+ * The in-tree spi-rt2880 driver (bus_num==1 => SPI1_POR | ARB_EN) already drives
+ * it; it just needs enabling plus a pin-37-only SPI-CS1 pinmux, supplied by the
+ * per-kernel patch patches/ramips/patches-<kver>/999-tessel-mt7620-spi-cs1.patch
+ * (k4.4 renames the group to "spi_cs1"; k4.14 keeps the stock "spi refclk" name
+ * and only trims it to pin 37 -- the .dtsi group reference differs per release).
+ *
+ * NOTE: `compatible = "spidev"` binds unchanged through 22.03 (k5.10) — the
+ * k4.14/5.4/5.10 spidev only WARNs "buggy DT" and still creates /dev/spidevX.Y.
+ * It FIRST HARD-BREAKS at 23.05 (kernel 5.15): spidev_of_check() returns
+ * -EINVAL ("spidev listed directly in DT is not supported") for a literal
+ * "spidev" compatible, so no /dev node is created. From k5.15+ the build
+ * harness (apply_overlay) rewrites this to the whitelisted "rohm,dh2228fv"
+ * (the /dev node name spidevBUS.CS is unchanged, so spid is unaffected). The
+ * rewrite is version-gated because "spidev" anywhere in the list still trips
+ * the 5.15 check and <=k5.10 needs the bare "spidev" to bind via modalias.
+ */
+&spi1 {
+	status = "okay";
+
+	spidev@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
+};
+
+&ehci {
+	status = "okay";
+};
+
+&ohci {
+	status = "okay";
+};
+
+&ethernet {
+	mtd-mac-address = <&factory 0x4>;
+	mediatek,portmap = "wllll";
+};
+
+&wmac {
+	ralink,mtd-eeprom = <&factory 0>;
+};
+
+/*
+ * Mux the peripheral pin groups we drive as GPIO (notably the "i2c" group,
+ * pins 1 & 2 = the coprocessor SYNC/IRQ lines that spid exports via sysfs).
+ *
+ * BOTH property spellings are supplied deliberately, because the ramips
+ * rt2880 pinmux driver changed how it parses this node across our hop range:
+ *   - <=19.07 (k<=4.14): the driver ships its own dt_node_to_map that reads the
+ *     ralink-specific `ralink,group` / `ralink,function` properties.
+ *   - 21.02+ (k5.4, driver moved to drivers/staging/mt7621-pinctrl): dt_node_to_map
+ *     was switched to the GENERIC pinconf_generic_dt_node_to_map_all, which reads
+ *     the standard `groups` / `function` properties and IGNORES `ralink,*`.
+ * Carrying both keeps this single overlay DTS correct on every hop: each parser
+ * reads its own spelling and ignores the other. Without the generic spelling the
+ * i2c group is never muxed to gpio at 5.4, so spid's `echo 2 > .../export` fails
+ * with `pin 2 is not set to gpio mux` (EINVAL) and the bridge crash-loops.
+ */
+&pinctrl {
+	state_default: pinctrl0 {
+		default {
+			ralink,group = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			ralink,function = "gpio";
+			groups = "ephy", "wled", "pa", "i2c", "wdt", "uartf";
+			function = "gpio";
+		};
+	};
+};
