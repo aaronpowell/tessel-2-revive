@@ -206,34 +206,42 @@ EOF
     chmod 0755 "$SRC/files/etc/uci-defaults/"* 2>/dev/null || true
   fi
 
-  # Production Node/Tessel runtime overlay. Bakes the factory Node 4.2.1 + its
-  # uClibc closure + the tessel-export JS runtime into the rootfs via OpenWrt's
-  # files/ mechanism. The payload tarball is prebuilt (extracted from the factory
-  # RESTORE image and self-contained) and delivered via /artifacts (output/); it
-  # is NOT committed to git (large binaries). Regenerate it with
-  # scripts/extract-node-payload.sh if the factory image changes.
+  # Production Node/Tessel runtime overlay. Bakes a SOFT-FLOAT Node 8.11.3 (built in
+  # the in-ladder 19.07 musl tree, then lifted onto this 25.12/musl rootfs) + its
+  # dependency closure + the tessel-export JS runtime into the rootfs via OpenWrt's
+  # files/ mechanism. The payload tarball is prebuilt and delivered via /artifacts
+  # (output/); it is NOT committed to git (large binaries). Regenerate it with
+  # scripts/extract-node8-payload.sh (needs a built 19.07 node + the node-8 JS).
   #
-  # Layout the payload lays down (see extract-node-payload.sh for the why):
-  #   /lib/ld-uClibc.so.0        node's PT_INTERP loader (distinct soname; no musl clash)
-  #   /opt/tessel/bin/node       unmodified factory node 4.2.1 (uClibc, sstripped)
-  #   /opt/tessel/lib/*.so*      full uClibc dependency closure (incl. libssl/crypto 1.0.0,
-  #                              libstdc++.so.6 / libz.so.1 — the only sonames that also
-  #                              exist as musl builds in /usr/lib, hence the isolation)
-  #   /usr/bin/node              wrapper: sets LD_LIBRARY_PATH=/opt/tessel/lib (searched
-  #                              before /lib:/usr/lib -> uClibc libs win, no ABI clash) and
-  #                              NODE_PATH=/usr/lib/node (execPath-derived global path would
-  #                              otherwise miss the runtime). usbexecd execs `node` on PATH.
-  #   /usr/lib/node/{tessel,tessel-export}.js   the on-device tessel runtime module
-  # patchelf was NOT usable (the factory ELFs are sstripped -> no section headers), so the
-  # loader path is left native and isolation is done via LD_LIBRARY_PATH instead.
+  # WHY soft-float 8.11.3 (not the factory 4.2.1): the factory node is o32 HARD-FLOAT
+  # with no .MIPS.abiflags; on the FPU-less 24KEc the 6.12 kernel won't emulate its
+  # cp1 ops -> SIGILL. A soft-float node emits zero FP instructions and cannot hit it.
+  #
+  # Layout the payload lays down (see extract-node8-payload.sh for the why):
+  #   /opt/tessel/bin/node       soft-float node 8.11.3 (binutils-stripped, keeps
+  #                              .MIPS.abiflags -> readelf -A proves Soft float)
+  #   /opt/tessel/lib/*.so*      the 8-lib soft-float closure (libz, libhttp_parser,
+  #                              libuv, libnghttp2, libssl/crypto 1.1, libstdc++.so.6,
+  #                              libgcc_s.so.1). NO libc, NO loader: the interpreter
+  #                              soname ld-musl-mipsel-sf.so.1 is IDENTICAL to 25.12's
+  #                              system loader, which is forward-ABI-compatible and
+  #                              satisfies NEEDED libc.so itself -> shipping a loader
+  #                              would clobber /lib and brick every binary.
+  #   /usr/bin/node              wrapper: sets LD_LIBRARY_PATH=/opt/tessel/lib (so the
+  #                              19.07 closure incl. openssl 1.1 wins over 25.12's
+  #                              openssl 3, no clash) and NODE_PATH=/usr/lib/node
+  #                              (execPath-derived global path would otherwise miss the
+  #                              runtime). usbexecd execs `node` on PATH.
+  #   /usr/lib/node/{tessel,tessel-export}.js       on-device tessel runtime (node-8,
+  #   /opt/tessel/lib/node/{tessel,tessel-export}.js  dup'd for the execPath path)
   if [[ "${TESSEL_PROD:-0}" == "1" ]]; then
-    local payload="${TESSEL_NODE_PAYLOAD:-/artifacts/tessel-node-payload.tar.gz}"
+    local payload="${TESSEL_NODE_PAYLOAD:-/artifacts/tessel-node8-payload.tar.gz}"
     if [[ ! -f "$payload" ]]; then
       echo "ERROR: TESSEL_PROD=1 but node payload not found at $payload" >&2
-      echo "       Build it first: scripts/extract-node-payload.sh (needs the factory tarball)." >&2
+      echo "       Build it first: scripts/extract-node8-payload.sh (needs a built 19.07 node)." >&2
       exit 1
     fi
-    echo "==> TESSEL_PROD=1: baking Node 4.2.1 + tessel runtime from $payload ..."
+    echo "==> TESSEL_PROD=1: baking soft-float Node 8.11.3 + tessel runtime from $payload ..."
     mkdir -p "$SRC/files"
     tar xzpf "$payload" -C "$SRC/files"
     chmod 0755 "$SRC/files/usr/bin/node" "$SRC/files/opt/tessel/bin/node"

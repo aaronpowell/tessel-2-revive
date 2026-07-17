@@ -21,6 +21,7 @@ services:
       - TESSEL_DIAG=${TESSEL_DIAG:-0}
       - TESSEL_INITRAMFS=${TESSEL_INITRAMFS:-0}
       - TESSEL_PROD=${TESSEL_PROD:-0}
+      - TESSEL_NODE_PAYLOAD=${TESSEL_NODE_PAYLOAD:-}
 
   shell:
     build:
