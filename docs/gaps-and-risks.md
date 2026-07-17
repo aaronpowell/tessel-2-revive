@@ -6,14 +6,27 @@ Current status of known incomplete work, technical risks, and recommended next s
 
 ## Hardware validation (latest session findings)
 
-**Status:** ✅ Validated on real hardware (Windows USB path).
+**Status:** ✅ Validated on real hardware (Windows USB path). Device currently on **OpenWrt 18.06.9**.
 
-Validated outcomes from the latest recovery session:
+> **Progress update (2026-07-16):** the uplift is proceeding as a **cautious incremental hop**
+> (15.05 → 17.01 → 18.06 → 19.07 → … → 24.10), not the one-shot 24.10 jump described later in this
+> doc. **17.01 and 18.06.9 are both hardware-validated** (bridge up, `t2 list --usb` connects).
+> **19.07 builds and flashes but does not boot** (entropy/urngd stall suspected) and is the current
+> frontier. A **USB serial-console root shell** (works on any image, no `spid`/WiFi/soldering) was
+> discovered and now makes every future hop diagnosable. See
+> [`openwrt-upgrade-progress.md`](./openwrt-upgrade-progress.md) for the full journey and
+> [`risk-assessment-openwrt-18.06.md`](./risk-assessment-openwrt-18.06.md) for the residual-risk
+> analysis of sitting on 18.06.
+
+Validated outcomes from the recovery sessions:
 
 - `t2 list --usb` can discover a connected board on Windows
 - `t2 provision` completes successfully after USB process lifecycle hardening
 - `t2 restore --usb` succeeds when `T2_RESTORE_URL` points to a valid factory tarball
-- Post-restore reboot reached steady blue POWER LED and board recovered to usable state
+- A **repackaged restore tarball** (target `-squashfs-sysupgrade.bin` swapped in as the SquashFS
+  member) flashes a bootable, bridge-complete image over the spid-free SAM3/DFU path — proven to
+  recover the device to validated 18.06 after the 19.07 non-boot
+- Post-restore/flash reboot reached steady blue POWER LED and board recovered to usable state
 
 Observed nuance:
 
@@ -135,17 +148,19 @@ isolated, non-public, competently-managed network) plus the capability gaps is i
 
 ## SSH compatibility
 
-**Status:** ⚠️ Known issue on the current firmware.
+**Status:** ⚠️ Known issue **on the 15.05 factory firmware**; ✅ **resolved at 18.06+**.
 
-Modern OpenSSH clients reject the device's offered key exchange algorithms by default. The workaround:
+On the **factory (15.05)** image, modern OpenSSH clients reject the device's offered key exchange
+algorithms by default. The workaround:
 
 ```bash
 ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 root@<tessel>.local -i ~/.tessel/id_rsa
 ```
 
-`t2-cli` may also need this flag injected into its SSH connection options. **Needs verification on real hardware.**
-
-The long-term fix is the OpenWrt uplift (above), which would bring a current OpenSSH build.
+**At 18.06.9 this is no longer needed:** the image ships **dropbear 2017.75**, which offers
+modern KEX (curve25519-sha256), so current SSH clients and `t2-cli`'s SSH path connect without the
+legacy-KEX override. This is one of the concrete risk items retired by the incremental uplift (see
+[`risk-assessment-openwrt-18.06.md`](./risk-assessment-openwrt-18.06.md), T4).
 
 ---
 
