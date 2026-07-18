@@ -297,7 +297,9 @@ EOF
     # scripts run ONCE then get whited out of the read-only squashfs, so this never
     # clobbers a later `t2 rename` (which persists to the jffs2 overlay). Sanitizes
     # RELEASE (from /etc/tessel-release) to a hostname-safe token and appends the last
-    # 4 hex of eth0's MAC (matching the factory Tessel-<MAC> convention).
+    # 4 hex of the board's STABLE factory WiFi MAC (mt7620 EEPROM, the same source the
+    # original Tessel-<MAC> naming used) so the suffix is deterministic across flashes
+    # (eth0's MAC is a per-boot random locally-administered address, unusable here).
     mkdir -p "$SRC/files/etc/uci-defaults"
     cat > "$SRC/files/etc/uci-defaults/99-tessel-hostname" <<'EOF'
 #!/bin/sh
@@ -307,14 +309,24 @@ EOF
 rel="${RELEASE:-unknown}"
 # release -> hostname-safe token: lowercase, non-alnum -> '-', squeeze repeats, trim
 reltok="$(printf %s "$rel" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-' | tr -s '-' | sed -e 's/^-//' -e 's/-$//')"
-# last 4 hex of the first real MAC (eth0 first, like the factory naming; else any non-zero)
+# last 4 hex of the board's STABLE factory WiFi MAC (mt7620 EEPROM offset 0x4 -- the
+# same source the original Tessel-<MAC> naming used). Deterministic and always readable
+# regardless of interface bring-up. Falls back to the first real netdev MAC only if the
+# factory partition can't be read (eth0's own MAC is a per-boot random address).
 mac=""
-for f in /sys/class/net/eth0/address /sys/class/net/wlan0/address /sys/class/net/*/address; do
-	[ -r "$f" ] || continue
-	m="$(tr -d ':' < "$f" 2>/dev/null | tr 'A-Z' 'a-z')"
-	case "$m" in ""|000000000000) continue ;; esac
-	mac="$m"; break
-done
+fmtd="$(sed -n 's/^\(mtd[0-9]*\):.*"factory".*/\1/p' /proc/mtd 2>/dev/null | head -n1)"
+if [ -n "$fmtd" ] && [ -r "/dev/$fmtd" ]; then
+	mac="$(dd if="/dev/$fmtd" bs=1 skip=4 count=6 2>/dev/null | hexdump -v -e '/1 "%02x"')"
+fi
+case "$mac" in ""|000000000000|ffffffffffff) mac="" ;; esac
+if [ -z "$mac" ]; then
+	for f in /sys/class/net/eth0/address /sys/class/net/wlan0/address /sys/class/net/*/address; do
+		[ -r "$f" ] || continue
+		m="$(tr -d ':' < "$f" 2>/dev/null | tr 'A-Z' 'a-z')"
+		case "$m" in ""|000000000000) continue ;; esac
+		mac="$m"; break
+	done
+fi
 suffix=""
 [ ${#mac} -ge 4 ] && suffix="-${mac#"${mac%????}"}"
 host="tessel-${reltok}${suffix}"

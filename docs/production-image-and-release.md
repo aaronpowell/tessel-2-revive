@@ -176,13 +176,20 @@ time.
 The production image ships a first-boot `uci-defaults` script
 (`/etc/uci-defaults/99-tessel-hostname`) that sets the device hostname to
 **`tessel-<release>-<mac4>`** — the sanitized `RELEASE` (from `/etc/tessel-release`)
-plus the last 4 hex of `eth0`'s MAC. For example `tessel-v25-12-5-node8-r1-4704`.
+plus the last 4 hex of the board's **stable factory WiFi MAC** (read from the
+`factory` MTD partition, the same source the original `Tessel-<MAC>` naming used).
+For example `tessel-v25-12-5-node8-r2-d3ab`.
 This replaces the stock OpenWrt default (`OpenWrt`) that otherwise shows up in
 `t2 list`.
 
 The name is derived **on-device** at first boot (the MAC isn't known at build time)
 and includes the MAC tail so two boards flashed with the same release don't collide
-on the `<name>.local` mDNS name. `uci-defaults` scripts run once and are then whited
+on the `<name>.local` mDNS name. The suffix comes from the factory partition rather
+than `eth0`'s address because on this board `eth0` is assigned a **random,
+locally-administered MAC each boot**, which would make the suffix non-deterministic;
+the factory MAC is burned in flash and identical across flashes. If the factory
+partition can't be read the script falls back to the first real netdev MAC.
+`uci-defaults` scripts run once and are then whited
 out of the read-only squashfs, so this **never** clobbers a later rename — change the
 name anytime with:
 
