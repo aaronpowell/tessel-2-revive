@@ -289,6 +289,42 @@ TESSEL_RUNTIME="t2-firmware@a22ba2d2"
 EOF
     echo "    /etc/tessel-release baked:"
     sed 's/^/      /' "$SRC/files/etc/tessel-release"
+
+    # Default hostname: a first-boot uci-defaults script that names the device
+    # tessel-<release>-<mac4> (release-stamped AND per-device-unique, so two boards
+    # on one LAN don't collide on the mDNS <name>.local). The name is derived
+    # ON-DEVICE at first boot because the MAC isn't known at build time. uci-defaults
+    # scripts run ONCE then get whited out of the read-only squashfs, so this never
+    # clobbers a later `t2 rename` (which persists to the jffs2 overlay). Sanitizes
+    # RELEASE (from /etc/tessel-release) to a hostname-safe token and appends the last
+    # 4 hex of eth0's MAC (matching the factory Tessel-<MAC> convention).
+    mkdir -p "$SRC/files/etc/uci-defaults"
+    cat > "$SRC/files/etc/uci-defaults/99-tessel-hostname" <<'EOF'
+#!/bin/sh
+# First-boot default hostname: tessel-<release>-<mac4>. Override anytime with:
+#   t2 rename <name>   (or: uci set system.@system[0].hostname=..; uci commit system)
+. /etc/tessel-release 2>/dev/null
+rel="${RELEASE:-unknown}"
+# release -> hostname-safe token: lowercase, non-alnum -> '-', squeeze repeats, trim
+reltok="$(printf %s "$rel" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-' | tr -s '-' | sed -e 's/^-//' -e 's/-$//')"
+# last 4 hex of the first real MAC (eth0 first, like the factory naming; else any non-zero)
+mac=""
+for f in /sys/class/net/eth0/address /sys/class/net/wlan0/address /sys/class/net/*/address; do
+	[ -r "$f" ] || continue
+	m="$(tr -d ':' < "$f" 2>/dev/null | tr 'A-Z' 'a-z')"
+	case "$m" in ""|000000000000) continue ;; esac
+	mac="$m"; break
+done
+suffix=""
+[ ${#mac} -ge 4 ] && suffix="-${mac#"${mac%????}"}"
+host="tessel-${reltok}${suffix}"
+uci set system.@system[0].hostname="$host"
+uci commit system
+echo "$host" > /proc/sys/kernel/hostname 2>/dev/null
+exit 0
+EOF
+    chmod 0755 "$SRC/files/etc/uci-defaults/99-tessel-hostname"
+    echo "    /etc/uci-defaults/99-tessel-hostname baked (first-boot hostname tessel-<release>-<mac4>)"
   fi
 
   cp "$OVERLAY/config.seed" "$SRC/.config"

@@ -33,6 +33,7 @@ config injections), plus a **baked userspace Node runtime**.
 | Node runtime | `/opt/tessel/bin/node` = soft-float Node 8.11.3 + an 8-lib closure under `/opt/tessel/lib`; `/usr/bin/node` = wrapper |
 | Tessel JS | `/usr/lib/node/{tessel,tessel-export}.js` (also dup'd under `/opt/tessel/lib/node/`) |
 | Release marker | `/etc/tessel-release` (build metadata — see §5) |
+| Default hostname | `/etc/uci-defaults/99-tessel-hostname` sets `tessel-<release>-<mac4>` on first boot (see §5) |
 
 ### Why Node is lifted, not built in-tree
 
@@ -143,7 +144,8 @@ on-device bridge), so a half-written flash is always recoverable by re-running
 - **OS:** `dd if=/dev/mtd5 bs=64k count=1 | md5sum` ≠ all-`0xFF`; mtd5 starts with
   `hsqs`; `VFS: Mounted root (squashfs filesystem) readonly` (no panic);
   `/dev/spidev1.0` present; `spid` + `usbexecd` steady at boot with no
-  `invalid GPIO` errors; host `t2 list --usb` → `USB␉OpenWrt`.
+  `invalid GPIO` errors; host `t2 list --usb` → the device now reports its
+  `tessel-<release>-<mac4>` name (no longer the stock `OpenWrt`).
 - **Runtime:** `node -e "console.log(process.version)"` → **v8.11.3** (no
   `SIGILL`); `require('tessel')` resolves; `cat /etc/tessel-release` shows the
   metadata; `t2 run` blinky flashes **LED0 (green)** and **LED1 (blue)**.
@@ -168,6 +170,27 @@ TESSEL_RUNTIME="t2-firmware@a22ba2d2"
 It is shell-sourceable (`. /etc/tessel-release`). `RELEASE` comes from the
 `TESSEL_RELEASE` build flag; `BUILD_DATE` and `GIT_COMMIT` are computed at build
 time.
+
+### Default hostname
+
+The production image ships a first-boot `uci-defaults` script
+(`/etc/uci-defaults/99-tessel-hostname`) that sets the device hostname to
+**`tessel-<release>-<mac4>`** — the sanitized `RELEASE` (from `/etc/tessel-release`)
+plus the last 4 hex of `eth0`'s MAC. For example `tessel-v25-12-5-node8-r1-4704`.
+This replaces the stock OpenWrt default (`OpenWrt`) that otherwise shows up in
+`t2 list`.
+
+The name is derived **on-device** at first boot (the MAC isn't known at build time)
+and includes the MAC tail so two boards flashed with the same release don't collide
+on the `<name>.local` mDNS name. `uci-defaults` scripts run once and are then whited
+out of the read-only squashfs, so this **never** clobbers a later rename — change the
+name anytime with:
+
+```bash
+t2 rename <name>          # persists to the jffs2 overlay
+# or on-device:
+uci set system.@system[0].hostname='<name>'; uci commit system
+```
 
 ---
 
