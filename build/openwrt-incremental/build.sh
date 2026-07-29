@@ -290,6 +290,16 @@ EOF
     echo "    /etc/tessel-release baked:"
     sed 's/^/      /' "$SRC/files/etc/tessel-release"
 
+    # Build identifier for `t2 update`. t2-cli reads /etc/tessel-version
+    # (lib/tessel/update.js) and matches its contents against the `sha` field of the
+    # entries in builds.json to work out which build the board is currently running.
+    # Without this file the CLI logs "Could not find firmware version" and falls back
+    # to forcing the update, so it can never tell you that you're already up to date
+    # (and never does a real version comparison). Keep this value identical to the
+    # `sha` of this release's builds.json entry.
+    printf '%s\n' "$gcommit" > "$SRC/files/etc/tessel-version"
+    echo "    /etc/tessel-version baked: $gcommit"
+
     # Default hostname: a first-boot uci-defaults script that names the device
     # tessel-<release>-<mac4> (release-stamped AND per-device-unique, so two boards
     # on one LAN don't collide on the mDNS <name>.local). The name is derived
