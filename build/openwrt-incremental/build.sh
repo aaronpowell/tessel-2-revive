@@ -411,7 +411,11 @@ uci -q set network.wwan.proto='dhcp'
 # WiFi lease in the SAME subnet once the board joins a typical network -- two
 # interfaces, one subnet, ambiguous return path, flaky `t2 run` over WiFi. The Tessel
 # is a USB/WiFi-first device, so relocating its vestigial wired LAN is the cheap fix.
-uci -q set network.lan.ipaddr='192.168.99.1'
+# NOTE the /24: OpenWrt 25.12 carries the prefix length in `ipaddr` itself (CIDR) and
+# has no separate `netmask` option, so setting a bare address silently yields a /32 --
+# an interface with no subnet route, which looks configured but reaches nothing.
+uci -q set network.lan.ipaddr='192.168.99.1/24'
+uci -q delete network.lan.netmask
 uci -q commit network
 
 # Put wwan in the `lan` firewall zone (INPUT ACCEPT) so SSH + mDNS work once joined.
@@ -432,6 +436,12 @@ done
 if uci -q get wireless.@wifi-iface[0] >/dev/null; then
 	uci -q set wireless.@wifi-iface[0].mode='sta'
 	uci -q set wireless.@wifi-iface[0].network='wwan'
+	# Pin the kernel interface name. OpenWrt >=21.02 names wireless interfaces
+	# after the phy (e.g. `phy0-sta0`), but t2-cli hardcodes `wlan0` throughout --
+	# `ubus call iwinfo info {"device":"wlan0"}`, `iwinfo wlan0 scan`, the DHCP
+	# lease lookup. Without this the radio comes up perfectly and every CLI WiFi
+	# command still fails with a confusing "Not found".
+	uci -q set wireless.@wifi-iface[0].ifname='wlan0'
 	uci -q set wireless.@wifi-iface[0].ssid='tessel-unconfigured'
 	uci -q set wireless.@wifi-iface[0].encryption='psk2'
 	uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
