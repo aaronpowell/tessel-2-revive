@@ -37,6 +37,9 @@ import {
     deviceTargetArgs,
     selectedDevice,
     writeStdin,
+    runProcess,
+    resolveT2Invocation,
+    stripAnsiCodes,
 } from "./runtime.mjs";
 
 const instances = new Map();
@@ -173,6 +176,54 @@ function wifiArgs(instance, body) {
         throw new Error(`Unknown wifi action: ${action}.`);
     }
     return [...args, ...deviceTargetArgs(instance)];
+}
+
+// Run `t2 wifi -l` and return the visible networks as structured data instead of
+// a wall of console text, so the UI can offer them as a pick list. Typing an
+// SSID by hand is the easiest way to fail a join: a wrong character or a missed
+// plural is indistinguishable from a wrong password in the CLI's output.
+//
+// `t2 wifi -l` prints one network per line as "\t<ssid> (<quality>)" — see
+// controller.printAvailableNetworks in repos/t2-cli/lib/controller.js.
+async function scanWifiNetworks(instance) {
+    const invocation = resolveT2Invocation(instance, ["wifi", "-l", ...deviceTargetArgs(instance)]);
+    const { output } = await runProcess(invocation.command, invocation.args, {
+        cwd: PROJECT_REPO_ROOT,
+        shell: invocation.shell,
+    });
+
+    // The CLI draws a spinner with \r; strip those frames so they neither look
+    // like network rows nor leak into the error we surface. Runs of 3+ of the
+    // spinner glyphs are always the spinner (a quality like "61/70" is not).
+    const plain = stripAnsiCodes(output).replace(/[\\|/-]{3,}/g, "");
+    const networks = [];
+    const seen = new Set();
+
+    for (const line of plain.split(/\r?\n/)) {
+        // The CLI's own log lines start at column 0; network rows are indented.
+        if (/^\s*(INFO|WARN|ERR)\b/.test(line)) {
+            continue;
+        }
+        const match = line.match(/^\s+(.*?)\s*\(([^()]*)\)\s*$/);
+        if (!match || !match[1] || seen.has(match[1])) {
+            continue;
+        }
+        seen.add(match[1]);
+        networks.push({ ssid: match[1], quality: match[2] });
+    }
+
+    if (!networks.length) {
+        // Surface the CLI's own explanation (radio off, no authorized device,
+        // ...) rather than an empty list, which reads as "nothing in range".
+        const reason = plain
+            .split(/\r?\n/)
+            .map((line) => line.replace(/^\s*(INFO|WARN|ERR)\s*/, "").trim())
+            .filter(Boolean)
+            .pop();
+        throw new Error(reason || "No networks visible to the Tessel.");
+    }
+
+    return networks;
 }
 
 // Build `t2 ap ...` arguments. `create` needs an SSID; password/security optional.
@@ -406,6 +457,11 @@ function renderHtml(instanceId) {
       }
       .saved-item .name { flex: 1; font-family: var(--font-mono, Consolas, monospace); cursor: pointer; }
       .saved-item button { padding: 2px 6px; font-size: var(--text-body-small, 12px); }
+      .scan-head {
+        display: flex; align-items: center; justify-content: space-between;
+        font-size: var(--text-body-small, 12px); opacity: .75; margin-top: 4px;
+      }
+      .saved-item .quality { opacity: .6; font-size: var(--text-body-small, 12px); }
       .stdin-input {
         min-width: 200px;
         flex: 1;
@@ -486,6 +542,13 @@ function renderHtml(instanceId) {
         <div id="savedWrap">
           <div class="saved-list" id="savedList"></div>
         </div>
+        <div id="scanWrap" style="display:none">
+          <div class="scan-head">
+            <span>Visible networks</span>
+            <button id="netRescanBtn" type="button" class="subtle">Rescan</button>
+          </div>
+          <div class="saved-list" id="scanList"></div>
+        </div>
         <div class="row">
           <span>Network name (SSID)</span>
           <input id="netSsid" placeholder="MyNetwork" autocomplete="off" />
@@ -508,7 +571,7 @@ function renderHtml(instanceId) {
         <div class="actions">
           <button id="netPrimaryBtn" class="primary">Connect</button>
           <button id="netInfoBtn">Info</button>
-          <button id="netListBtn">List</button>
+          <button id="netListBtn" title="Scan for networks the Tessel can see and pick one">Scan</button>
           <button id="netOnBtn">On</button>
           <button id="netOffBtn">Off</button>
           <span class="spacer"></span>
@@ -556,6 +619,9 @@ function renderHtml(instanceId) {
       const netTitle = document.getElementById("netTitle");
       const netHint = document.getElementById("netHint");
       const savedList = document.getElementById("savedList");
+      const scanWrap = document.getElementById("scanWrap");
+      const scanList = document.getElementById("scanList");
+      const netRescanBtn = document.getElementById("netRescanBtn");
       const netSsid = document.getElementById("netSsid");
       const netPassword = document.getElementById("netPassword");
       const netShowPass = document.getElementById("netShowPass");
@@ -666,7 +732,14 @@ function renderHtml(instanceId) {
         });
         if (!response.ok) {
           const err = await response.text();
-          throw new Error(err || "Request failed");
+          // Endpoints report failures as {"error": "..."}; unwrap it so the UI
+          // shows the message rather than a JSON blob.
+          let message = err;
+          try {
+            const parsed = JSON.parse(err);
+            if (parsed && parsed.error) { message = parsed.error; }
+          } catch (e) { /* not JSON; use the raw text */ }
+          throw new Error(message || "Request failed");
         }
         return response.json();
       }
@@ -950,6 +1023,45 @@ function renderHtml(instanceId) {
         else if (t.dataset.forget != null) { forgetNetwork(t.dataset.forget); }
       });
 
+      // Scan for networks the Tessel can actually see and let them be picked,
+      // so an SSID never has to be retyped from memory.
+      function renderScan(state, networks) {
+        if (state === "scanning") {
+          scanList.innerHTML = '<div class="muted" style="padding:2px 0">Scanning...</div>';
+          return;
+        }
+        if (state === "error") {
+          scanList.innerHTML = '<div class="muted" style="padding:2px 0">' + escHtml(networks) + "</div>";
+          return;
+        }
+        scanList.innerHTML = networks
+          .map(function (n) {
+            return (
+              '<div class="saved-item">' +
+              '<span class="name" data-scan="' + escAttr(n.ssid) + '">' + escHtml(n.ssid) + "</span>" +
+              (n.quality ? '<span class="quality">' + escHtml(n.quality) + "</span>" : "") +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+      function scanNetworks() {
+        scanWrap.style.display = "";
+        renderScan("scanning");
+        post("/api/wifi/scan")
+          .then(function (data) { renderScan("ok", data.networks || []); })
+          .catch(function (error) { renderScan("error", error.message); });
+      }
+      scanList.addEventListener("click", function (event) {
+        var t = event.target;
+        if (!t || !t.dataset || t.dataset.scan == null) return;
+        // A saved entry for the same SSID still knows the password/security.
+        fillFromSaved(t.dataset.scan);
+        netSsid.value = t.dataset.scan;
+        netPassword.focus();
+      });
+      netRescanBtn.addEventListener("click", scanNetworks);
+
       function openNetModal(mode) {
         netMode = mode;
         var isAp = mode === "ap";
@@ -964,6 +1076,8 @@ function renderHtml(instanceId) {
           .map(function (s) { return '<option value="' + s + '">' + s + "</option>"; })
           .join("");
         netSecurity.value = "none";
+        scanWrap.style.display = "none";
+        scanList.innerHTML = "";
         renderSaved();
         netModal.classList.add("open");
         netSsid.focus();
@@ -1009,7 +1123,7 @@ function renderHtml(instanceId) {
         sendNet(netMode === "ap" ? "create" : "connect");
       });
       netInfoBtn.addEventListener("click", function () { sendNet("info"); });
-      netListBtn.addEventListener("click", function () { sendNet("list"); });
+      netListBtn.addEventListener("click", scanNetworks);
       netOnBtn.addEventListener("click", function () { sendNet("on"); });
       netOffBtn.addEventListener("click", function () { sendNet("off"); });
 
@@ -1343,6 +1457,16 @@ async function createInstance(instanceId, workspacePath) {
             return;
         }
 
+        if (req.method === "POST" && pathname === "/api/wifi/scan") {
+            try {
+                const networks = await scanWifiNetworks(instance);
+                json(res, 200, { networks });
+            } catch (error) {
+                json(res, 400, { error: error.message });
+            }
+            return;
+        }
+
         if (req.method === "POST" && pathname === "/api/wifi") {
             try {
                 const body = await parseJsonBody(req);
@@ -1587,7 +1711,7 @@ export function createEditorCanvas() {
             },
             {
                 name: "list_devices",
-                description: "Run `t2 list --usb` and refresh available Tessel devices.",
+                description: "Run `t2 list` and refresh available Tessel devices (USB and LAN).",
                 handler: async (ctx) => {
                     const instance = requireInstance(ctx);
                     return await startCommand(instance, listCommandArgs(instance), {
@@ -1712,6 +1836,15 @@ export function createEditorCanvas() {
                 handler: async (ctx) => {
                     const instance = requireInstance(ctx);
                     return await startCommand(instance, wifiArgs(instance, ctx.input), { kind: "wifi" });
+                },
+            },
+            {
+                name: "scan_wifi_networks",
+                description:
+                    "Scan for wireless networks visible to the Tessel and return them as data ({ssid, quality}). Use this before connect_wifi so the SSID is taken from the air rather than typed from memory.",
+                handler: async (ctx) => {
+                    const instance = requireInstance(ctx);
+                    return { networks: await scanWifiNetworks(instance) };
                 },
             },
             {

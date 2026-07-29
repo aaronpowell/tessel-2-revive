@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const EXTENSION_FILE = fileURLToPath(import.meta.url);
 export const PROJECT_REPO_ROOT = path.resolve(path.dirname(EXTENSION_FILE), "..", "..", "..");
-export const LIST_DISCOVERY_TIMEOUT_SECONDS = 1;
+// Long enough for an mDNS round trip, since discovery now covers LAN as well as USB.
+export const LIST_DISCOVERY_TIMEOUT_SECONDS = 3;
 export const VERSION_DISCOVERY_TIMEOUT_SECONDS = 4;
 export const DISCOVERY_PROCESS_GRACE_MS = 4000;
 
@@ -343,12 +344,22 @@ export function inferDevices(output) {
             continue;
         }
         const transport = match[1].toUpperCase();
-        const name = match[2].trim();
+        // t2 appends tab-separated annotations to LAN rows, e.g.
+        // "(USB connect and run `t2 provision` to authorize)". Only the first
+        // field is the device name — the rest must never reach --name.
+        const fields = match[2].split("\t");
+        const name = fields[0].trim();
+        if (!name) {
+            continue;
+        }
+        const note = fields.slice(1).join(" ").trim();
         const id = `${transport}:${name}`;
         devices.push({
             id,
             transport,
             name,
+            authorized: !/authorize/i.test(note),
+            note,
         });
     }
     return devices;
@@ -389,18 +400,24 @@ export function normalizeTimeoutSeconds(value) {
 }
 
 export function listCommandArgs(instance) {
-    return ["list", "--usb", "--timeout", String(listTimeoutSeconds(instance))];
+    // No transport flag: `t2 list` finds USB *and* LAN devices, and inferDevices
+    // parses both. A board that has just been put on Wi-Fi is often LAN-only
+    // (USB does not always re-enumerate after a flash), and a USB-only scan
+    // would leave it unselectable — and every device-targeted command with it.
+    return ["list", "--timeout", String(listTimeoutSeconds(instance))];
 }
 
 export function versionCommandArgs(instance) {
     const device = selectedDevice(instance);
-    const baseArgs = device ? ["version", "--name", device.name] : ["version", "--usb"];
+    const baseArgs = device ? ["version", "--name", device.name] : ["version"];
     return [...baseArgs, "--timeout", String(versionTimeoutSeconds(instance))];
 }
 
 export function deviceTargetArgs(instance) {
     const device = selectedDevice(instance);
-    return device ? ["--name", device.name] : ["--usb"];
+    // With nothing selected, let t2 pick whatever transport it can find rather
+    // than forcing --usb, which fails outright on a LAN-only board.
+    return device ? ["--name", device.name] : [];
 }
 
 export async function terminateChildProcess(child) {
