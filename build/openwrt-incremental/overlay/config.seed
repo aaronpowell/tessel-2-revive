@@ -17,5 +17,20 @@ CONFIG_PACKAGE_kmod-spi-dev=y
 CONFIG_PACKAGE_kmod-usb2=y
 CONFIG_PACKAGE_kmod-usb-ohci=y
 
-# Keep the image lean for a fast validation hop.
-CONFIG_PACKAGE_wpad-mini=y
+# WiFi station mode (`t2 wifi`) and LAN discovery (`t2 list`).
+#
+#   wpad-basic-mbedtls  full wpa_supplicant, i.e. WPA2-PSK *client* (station) mode.
+#                       Replaces CONFIG_PACKAGE_wpad-mini, which no longer exists at
+#                       25.12 -- that line was silently dropped by `make defconfig`
+#                       and the target default happened to supply this same package.
+#                       Naming it explicitly pins the behaviour.
+#   rpcd-mod-iwinfo     provides `ubus call iwinfo info '{"device":"wlan0"}'`, which
+#                       t2-cli uses to read WiFi status (lib/tessel/commands.js).
+#                       Without it the image has no /usr/libexec/rpcd at all and the
+#                       call fails with "Not found".
+#   umdns               mDNS responder. `t2 list` browses _tessel._tcp
+#                       (lib/lan-connection.js) -- with no responder in the image the
+#                       board can never be discovered over the network.
+CONFIG_PACKAGE_wpad-basic-mbedtls=y
+CONFIG_PACKAGE_rpcd-mod-iwinfo=y
+CONFIG_PACKAGE_umdns=y

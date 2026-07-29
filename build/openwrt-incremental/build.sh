@@ -339,6 +339,98 @@ exit 0
 EOF
     chmod 0755 "$SRC/files/etc/uci-defaults/99-tessel-hostname"
     echo "    /etc/uci-defaults/99-tessel-hostname baked (first-boot hostname tessel-<release>-<mac4>)"
+
+    # mDNS service record so `t2 list` can find the board over the network.
+    # t2-cli's LAN scanner browses _tessel._tcp (lib/lan-connection.js) and then
+    # SSHes to root@<host>:22 with the key written by `t2 provision`. Stock OpenWrt
+    # ships no mDNS responder at all, so without this (and the umdns package added
+    # to config.seed) LAN discovery can never succeed no matter how good the WiFi
+    # association is. umdns picks up every *.json in /etc/umdns at start.
+    mkdir -p "$SRC/files/etc/umdns"
+    cat > "$SRC/files/etc/umdns/tessel.json" <<'EOF'
+{
+	"tessel": {
+		"service": "_tessel._tcp.local",
+		"port": 22
+	}
+}
+EOF
+    echo "    /etc/umdns/tessel.json baked (_tessel._tcp advertisement for 't2 list')"
+
+    # Default WiFi posture: a first-boot uci-defaults script that converts OpenWrt's
+    # STOCK wireless config into something `t2 wifi` can drive.
+    #
+    # Why this is needed: at 25.12 the image inherits OpenWrt's generated wireless
+    # config, whose first wifi-iface is an *access point* (mode 'ap', ssid 'OpenWrt',
+    # disabled '1'). t2-cli writes ssid/key/encryption/disabled to
+    # wireless.@wifi-iface[0] but never touches `mode`, so `t2 wifi -n <ssid> -p <pw>`
+    # on a stock config would make the Tessel BROADCAST your network's name instead of
+    # joining it. The original 15.05 Tessel firmware shipped a custom wireless config
+    # that was already in station mode; this restores that assumption.
+    #
+    # It also gives the station iface its own DHCP-client network (wwan) and puts that
+    # network in the `lan` firewall zone, because that zone's INPUT policy is ACCEPT --
+    # required for SSH (t2 run/push) and mDNS (t2 list) to be reachable once associated.
+    # Putting it in `wan` would have the firewall silently reject exactly the traffic
+    # the CLI depends on.
+    #
+    # The iface is left ENABLED with an unmatched placeholder SSID so that `wlan0`
+    # exists from first boot: `t2 wifi -l` runs `iwinfo wlan0 scan`, which needs a real
+    # interface. A psk2 placeholder key (not an open network) means it can never
+    # associate to a spoofed AP while unconfigured.
+    #
+    # Same runs-once + squashfs-whiteout mechanism as the hostname script, so a later
+    # `t2 wifi` / `uci` edit is never clobbered.
+    cat > "$SRC/files/etc/uci-defaults/98-tessel-wifi" <<'EOF'
+#!/bin/sh
+# First-boot Tessel WiFi defaults: station (client) mode, ready for `t2 wifi`.
+# Reconfigure anytime with:  t2 wifi -n <ssid> -p <password>
+
+# netifd normally generates /etc/config/wireless during first boot; be defensive
+# about ordering so this script works whether it runs before or after that.
+[ -s /etc/config/wireless ] || /sbin/wifi config >/dev/null 2>&1
+uci -q get wireless.@wifi-iface[0] >/dev/null || /sbin/wifi config >/dev/null 2>&1
+
+# Dedicated DHCP-client network for the station interface.
+uci -q set network.wwan=interface
+uci -q set network.wwan.proto='dhcp'
+# Move the board's own LAN off 192.168.1.0/24. That is OpenWrt's default *and* by far
+# the most common home-router subnet, so leaving it would routinely put br-lan and the
+# WiFi lease in the SAME subnet once the board joins a typical network -- two
+# interfaces, one subnet, ambiguous return path, flaky `t2 run` over WiFi. The Tessel
+# is a USB/WiFi-first device, so relocating its vestigial wired LAN is the cheap fix.
+uci -q set network.lan.ipaddr='192.168.99.1'
+uci -q commit network
+
+# Put wwan in the `lan` firewall zone (INPUT ACCEPT) so SSH + mDNS work once joined.
+i=0
+while uci -q get firewall.@zone[$i] >/dev/null; do
+	if [ "$(uci -q get firewall.@zone[$i].name)" = "lan" ]; then
+		case " $(uci -q get firewall.@zone[$i].network) " in
+			*" wwan "*) ;;
+			*) uci -q add_list firewall.@zone[$i].network='wwan'
+			   uci -q commit firewall ;;
+		esac
+		break
+	fi
+	i=$((i+1))
+done
+
+# Station mode on the first wifi-iface -- the one t2-cli writes to.
+if uci -q get wireless.@wifi-iface[0] >/dev/null; then
+	uci -q set wireless.@wifi-iface[0].mode='sta'
+	uci -q set wireless.@wifi-iface[0].network='wwan'
+	uci -q set wireless.@wifi-iface[0].ssid='tessel-unconfigured'
+	uci -q set wireless.@wifi-iface[0].encryption='psk2'
+	uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
+	uci -q set wireless.@wifi-iface[0].disabled='0'
+	uci -q delete wireless.radio0.disabled
+	uci -q commit wireless
+fi
+exit 0
+EOF
+    chmod 0755 "$SRC/files/etc/uci-defaults/98-tessel-wifi"
+    echo "    /etc/uci-defaults/98-tessel-wifi baked (first-boot station-mode wireless default)"
   fi
 
   cp "$OVERLAY/config.seed" "$SRC/.config"
