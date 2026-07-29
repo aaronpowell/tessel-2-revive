@@ -28,9 +28,15 @@ CONFIG_PACKAGE_kmod-usb-ohci=y
 #                       t2-cli uses to read WiFi status (lib/tessel/commands.js).
 #                       Without it the image has no /usr/libexec/rpcd at all and the
 #                       call fails with "Not found".
+#   rpcd                MUST be named explicitly. rpcd-mod-iwinfo declares `rpcd` as a
+#                       hard dependency (no `+` prefix in its Depends line), so it is
+#                       NOT auto-selected; on an image this minimal nothing else pulls
+#                       rpcd in, and `make defconfig` then silently invalidates
+#                       rpcd-mod-iwinfo=y. Dropping this line drops iwinfo entirely.
 #   umdns               mDNS responder. `t2 list` browses _tessel._tcp
 #                       (lib/lan-connection.js) -- with no responder in the image the
 #                       board can never be discovered over the network.
 CONFIG_PACKAGE_wpad-basic-mbedtls=y
+CONFIG_PACKAGE_rpcd=y
 CONFIG_PACKAGE_rpcd-mod-iwinfo=y
 CONFIG_PACKAGE_umdns=y
