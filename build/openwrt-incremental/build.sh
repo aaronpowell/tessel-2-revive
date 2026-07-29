@@ -467,6 +467,13 @@ if uci -q get wireless.@wifi-iface[0] >/dev/null; then
 	uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
 	uci -q set wireless.@wifi-iface[0].disabled='1'
 	uci -q delete wireless.radio0.disabled
+	# `wifi detect` pins a FIXED channel (ch 1) into radio0 -- correct for an AP,
+	# wrong for a station: the radio parks on ch 1 and never scans 6/11, so it never
+	# sees APs on other channels and wpa_supplicant makes no association attempt at
+	# all. On a clean flash this masquerades as a driver/rpcd fault (`iwinfo wlan0
+	# info` shows the board's own MAC as the AP and Channel 0). `channel=auto` lets
+	# the station follow whatever channel the joined network is on.
+	uci -q set wireless.radio0.channel='auto'
 	uci -q commit wireless
 fi
 exit 0
