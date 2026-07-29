@@ -80,7 +80,48 @@ This works over USB without any prior setup. You only need to do this once per b
 
 ## 4. Flash updated firmware and OpenWrt
 
-The built artifacts live in WSL, reachable from Windows via `\\wsl.localhost\Ubuntu\...`:
+### Option A — flash the released production image (recommended)
+
+Download the `new_build_*.tar.gz` restore bundle from
+[**Releases**](https://github.com/aaronpowell/tessel-2-revive/releases/latest) — it contains
+OpenWrt 25.12.5 (kernel 6.12.94) with on-device Node.js 8.11.3 and the Tessel JS runtime.
+
+`t2 restore` fetches over HTTP, so serve the file locally and point `T2_RESTORE_URL` at it:
+
+```powershell
+# in the folder containing the downloaded tarball
+python -m http.server 8765
+```
+
+Then, from `repos/t2-cli`:
+
+```powershell
+$env:T2_FORCE_FLASH = '1'
+$env:T2_RESTORE_URL = 'http://127.0.0.1:8765/new_build_2512-prod-node8-r2.tar.gz'
+node .\bin\tessel-2.js restore --usb
+```
+
+Writing takes ~35 seconds and ends with `INFO Restore successful`.
+
+> ⚠️ **`t2 restore` does not reboot the board — physically unplug and replug it.** First boot
+> then takes **~3 minutes** (it formats the jffs2 overlay and runs first-boot scripts). Be
+> patient before assuming a failure.
+
+> ⚠️ **`t2 restore` is destructive to device identity.** It bulk-erases the flash and writes a
+> newly randomised MediaTek factory partition, so the board gets a **new WiFi MAC** — and
+> therefore a new default hostname — each time you restore.
+
+After it comes up, the board names itself `tessel-<release>-<mac4>` (e.g.
+`tessel-v25-12-5-node8-r2-fc2c`) rather than the stock `OpenWrt`. Rename it with
+`t2 rename <name>`.
+
+Full procedure, validation gates, and how to build the image yourself:
+[`production-image-and-release.md`](./production-image-and-release.md).
+
+### Option B — push locally-built artifacts
+
+If you've built your own artifacts (e.g. in WSL, reachable from Windows via
+`\\wsl.localhost\Ubuntu\...`), push them to the running OS instead:
 
 ```powershell
 node .\bin\tessel-2.js update `
@@ -88,10 +129,14 @@ node .\bin\tessel-2.js update `
   --openwrt-path  \\wsl.localhost\Ubuntu\home\aaron\code\github\tessel\openwrt\bin\ramips\openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin
 ```
 
-This takes **2–3 minutes**. The board reboots automatically when done.
+This takes **2–3 minutes**. The board reboots automatically when done. Set `T2_FORCE_FLASH=1`
+to force the sysupgrade (`-F`) and bypass the image compatibility check.
 
 > **DFU / bootloader mode is not required** for this path — the update is pushed over SSH/USB to the running OS.  
 > If you do need DFU mode (e.g. full recovery of a non-booting board): unplug, hold the button near the logo, plug in while holding, then release after 2–3 seconds. You should see an amber blinking LED.
+>
+> Note that `t2 update` can still fail at the firmware bootloader handoff even when the OpenWrt
+> transfer succeeds — Option A is the more dependable path.
 
 ---
 
@@ -111,9 +156,10 @@ INFO Node.js: 8.11.3
 
 ---
 
-## Recovery fallback (factory restore image)
+## Recovery fallback (2016 factory restore image)
 
-If `t2 restore` cannot fetch `new_build_next.tar.gz` from the default source, use the archived upstream factory image:
+If you need to go all the way back to the original stock firmware — or the production bundle
+above is unavailable — use the archived upstream factory image:
 
 `https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
 
@@ -121,6 +167,10 @@ If `t2 restore` cannot fetch `new_build_next.tar.gz` from the default source, us
 $env:T2_RESTORE_URL = "https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz"
 node .\bin\tessel-2.js restore --usb
 ```
+
+> This reverts the board to **OpenWrt 15.05 (2015, kernel 3.18) with Node.js 4.2.1** — the
+> unmaintained factory state, including the old SSH/TLS stack. Prefer the release bundle in
+> step 4 unless you specifically need stock firmware.
 
 ---
 

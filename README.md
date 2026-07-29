@@ -20,7 +20,20 @@ The forked repos are included as git submodules under [`repos/`](repos/).
 The board has been brought forward from its 2016 OpenWrt 15.05 (Chaos Calmer)
 factory image all the way to **OpenWrt 25.12.5 / kernel 6.12.94**, with an
 on-device **Node.js 8.11.3** runtime and the Tessel JS library — fully
-hardware-validated (`t2 run` blinks the LEDs). See:
+hardware-validated (`t2 run` blinks the LEDs).
+
+> **📦 Just want to flash a board?** Grab the latest prebuilt image from
+> [**Releases**](https://github.com/aaronpowell/tessel-2-revive/releases/latest).
+> Each release ships a `new_build_*.tar.gz` restore bundle (use this with `t2 restore`)
+> and the raw `.bin` sysupgrade image. Flashing steps are in
+> [`docs/production-image-and-release.md`](docs/production-image-and-release.md).
+>
+> Since `v25.12.5-node8-r2`, a freshly flashed board names itself
+> `tessel-<release>-<mac4>` (e.g. `tessel-v25-12-5-node8-r2-fc2c`) instead of showing up
+> as the stock `OpenWrt` — so you can tell boards apart in `t2 list`. Rename anytime with
+> `t2 rename <name>`.
+
+See:
 
 - [`docs/production-image-and-release.md`](docs/production-image-and-release.md) —
   **start here for the production image**: what's in it, how to build/flash/validate, `/etc/tessel-release`, and how to cut a release
@@ -96,11 +109,14 @@ tessel-2-revive/
 | U-Boot build | ✅ Builds locally |
 | OpenWrt legacy image build | ✅ Builds via Docker (Ubuntu 18.04 container) |
 | Release artifacts assembled | ✅ Local tarballs + `builds.json` generated |
-| Board provisioning (Windows USB) | 🔄 In progress — USB attach to WSL has usbipd quirks |
-| Firmware flashed to hardware | ⏳ Pending hardware validation |
-| Hello-world app on device | ⏳ Pending hardware validation |
+| Board provisioning (Windows USB) | ✅ Done — run `t2-cli` natively in Windows PowerShell (avoids usbipd/WSL quirks) |
+| Firmware flashed to hardware | ✅ Done — flashed + validated via `t2 restore` |
+| Hello-world app on device | ✅ Done — `t2 run` deploys and blinky drives LED0/LED1 |
 | Module library compatibility | ✅ In-scope libraries audited + test-modernised |
-| OpenWrt upstream uplift (24.10.x) | 📋 Planned — not started |
+| **OpenWrt upstream uplift** | ✅ **Complete — 25.12.5 / kernel 6.12.94 + Node 8.11.3, released as [`v25.12.5-node8-r2`](https://github.com/aaronpowell/tessel-2-revive/releases/latest)** |
+| Default device hostname | ✅ Done — self-names `tessel-<release>-<mac4>` instead of `OpenWrt` |
+| WiFi station mode on 25.12 | ⏳ Not yet exercised |
+| `t2 update` (no explicit paths) | ⚠️ Needs the `t2-cli` `builds` release published — use `t2 restore` or explicit `--openwrt-path` |
 
 ## Related upstream organisations
 

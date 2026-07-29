@@ -99,7 +99,7 @@ t2-cli (Node.js)
 |---------|--------|------|
 | `spid` | `t2-firmware/soc/spid.c` | SPI daemon; bridges SPI↔domain sockets |
 | `usbexecd` | `t2-firmware/soc/usbexecd.c` | Accepts shell commands over USB, routes stdio |
-| `node` | OpenWrt package (`openwrt-tessel/package/node`) | Real Node.js **v8.11.3** binary at `/usr/bin/node`; executes user scripts |
+| `node` | OpenWrt package (`openwrt-tessel/package/node`) | Real Node.js **v8.11.3** binary; `/usr/bin/node` (a wrapper → `/opt/tessel/bin/node` on the 25.12 image) executes user scripts |
 | `tessel.js` | `t2-firmware/node/tessel.js` | Node module; connects to port domain sockets |
 
 ### On-device Node.js runtime
@@ -114,6 +114,32 @@ The device runs a genuine, unmodified-source **Node.js v8.11.3** cross-compiled 
 | `--without-intl` | No full ICU / `Intl` locale support |
 
 Because the runtime is EOL Node 8, on-device scripts must stay within the Node 8 / ES2017 surface. Pure-JS npm packages deploy fine; native (C/C++) addons only work if a precompiled MIPS binary is available. See [`how-it-works.md`](how-it-works.md) §3 and §5 for the full picture, and [`gaps-and-risks.md`](gaps-and-risks.md) "Node.js version on device".
+
+#### Layout on the 25.12 production image
+
+On the OpenWrt 25.12 production image the runtime is **not** a plain binary at `/usr/bin/node` —
+it is deliberately self-contained so its dependencies can't clash with the modern system stack:
+
+```
+/usr/bin/node          # shell wrapper:
+                       #   exec env LD_LIBRARY_PATH=/opt/tessel/lib \
+                       #            NODE_PATH=/usr/lib/node /opt/tessel/bin/node "$@"
+/opt/tessel/bin/node   # the real soft-float Node 8.11.3 ELF
+/opt/tessel/lib/       # its private library closure (incl. OpenSSL 1.1)
+/usr/lib/node/         # tessel.js + tessel-export.js (resolved via NODE_PATH)
+```
+
+Node 8 is built in an in-ladder OpenWrt **19.07** toolchain (gcc-7.5 + musl, soft-float) and
+lifted onto 25.12 — the loader soname `ld-musl-mipsel-sf.so.1` is identical and musl is
+forward-ABI-compatible. Isolating the closure under `/opt/tessel` keeps its **OpenSSL 1.1** away
+from the system's **OpenSSL 3**. The system loader is used as-is (shipping a private one would
+clobber system musl and brick the board).
+
+Two consequences worth knowing when debugging: running `/opt/tessel/bin/node` **directly** fails
+on library resolution (go through `/usr/bin/node`), and JS only executes at all because the
+kernel is built with `CONFIG_MIPS_FP_SUPPORT=y` — V8's JIT emits `cop1` instructions that the
+FPU-less 24KEc must trap and emulate. See
+[`production-image-and-release.md`](production-image-and-release.md).
 
 ### Key source files (compatibility boundary)
 

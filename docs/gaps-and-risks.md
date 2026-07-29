@@ -4,56 +4,72 @@ Current status of known incomplete work, technical risks, and recommended next s
 
 ---
 
-## Hardware validation (latest session findings)
+## Hardware validation (current status)
 
-**Status:** ✅ Validated on real hardware (Windows USB path). Device currently on **OpenWrt 18.06.9**.
+**Status:** ✅ Fully validated on real hardware (Windows USB path). Device is on
+**OpenWrt 25.12.5 / kernel 6.12.94** with on-device **Node.js 8.11.3**, shipped as
+release [`v25.12.5-node8-r2`](https://github.com/aaronpowell/tessel-2-revive/releases/tag/v25.12.5-node8-r2).
 
-> **Progress update (2026-07-16):** the uplift is proceeding as a **cautious incremental hop**
-> (15.05 → 17.01 → 18.06 → 19.07 → … → 24.10), not the one-shot 24.10 jump described later in this
-> doc. **17.01 and 18.06.9 are both hardware-validated** (bridge up, `t2 list --usb` connects).
-> **19.07 builds and flashes but does not boot** (entropy/urngd stall suspected) and is the current
-> frontier. A **USB serial-console root shell** (works on any image, no `spid`/WiFi/soldering) was
-> discovered and now makes every future hop diagnosable. See
-> [`openwrt-upgrade-progress.md`](./openwrt-upgrade-progress.md) for the full journey and
-> [`risk-assessment-openwrt-18.06.md`](./risk-assessment-openwrt-18.06.md) for the residual-risk
-> analysis of sitting on 18.06.
+> **The uplift is complete.** The 15.05 → 25.12 climb was done as a **cautious incremental
+> hop** (15.05 → 17.01 → 18.06 → 19.07 → 21.02 → 22.03 → 23.05 → 24.10 → 25.12) rather than
+> one giant jump, and every hop was hardware-gated. That method is what made each break a
+> small, individually-diagnosable delta. See
+> [`production-image-and-release.md`](./production-image-and-release.md) for the current
+> image, [`openwrt-incremental-upgrade.md`](./openwrt-incremental-upgrade.md) for the
+> per-hop root-cause roadmap, and [`openwrt-upgrade-progress.md`](./openwrt-upgrade-progress.md)
+> for the narrative journey.
+>
+> A **USB serial-console root shell** (works on any image, no `spid`/WiFi/soldering) was
+> discovered early and made every subsequent hop diagnosable — it is the single most useful
+> tool in this repo for firmware debugging.
 
-Validated outcomes from the recovery sessions:
+Validated outcomes:
 
 - `t2 list --usb` can discover a connected board on Windows
 - `t2 provision` completes successfully after USB process lifecycle hardening
-- `t2 restore --usb` succeeds when `T2_RESTORE_URL` points to a valid factory tarball
-- A **repackaged restore tarball** (target `-squashfs-sysupgrade.bin` swapped in as the SquashFS
-  member) flashes a bootable, bridge-complete image over the spid-free SAM3/DFU path — proven to
-  recover the device to validated 18.06 after the 19.07 non-boot
-- Post-restore/flash reboot reached steady blue POWER LED and board recovered to usable state
+- `t2 restore --usb` succeeds when `T2_RESTORE_URL` points to a valid tarball
+- A **repackaged restore tarball** (target `-squashfs-sysupgrade.bin` swapped in as the
+  SquashFS member) flashes a bootable image over the spid-free SAM3/DFU path — this is the
+  primary flashing mechanism for the production image
+- On 25.12.5: squashfs mounts, `spid` + `usbexecd` start at boot, `/dev/spidev1.0` exists,
+  `node -e process.version` → `v8.11.3` with no SIGILL, and `t2 run` blinks LED0/LED1
 
 Observed nuance:
 
 - `t2 update` may still fail at firmware bootloader handoff (`No device found in bootloader mode`) even when OpenWrt transfer succeeds; this remains a known instability and should be treated separately from restore.
+- `t2 restore` is **destructive to device identity**: it bulk-erases the flash and writes a
+  freshly randomised MediaTek factory partition (MAC `02:a3:<4 random bytes>`, see
+  `t2-cli/lib/tessel/restore.js`). The board's WiFi MAC — and therefore the default
+  `tessel-<release>-<mac4>` hostname — changes after every restore. Don't treat either as a
+  permanent serial number.
 
-### OpenWrt 24.10 image — flashed, but device does not come back up
+### OpenWrt 24.10 image — flashed, but device did not come back up
 
-**Status:** ⛔ Core blocker for the uplift (see *OpenWrt upstream uplift* below).
+**Status:** ✅ **RESOLVED.** This was the core blocker for the uplift; it is fixed and the
+ladder ran through to 25.12.
 
-In the latest session the freshly built **OpenWrt 24.10 (kernel 6.6.144)** sysupgrade image was
-applied to real hardware with `t2 update --usb --openwrt-path <sysupgrade.bin>` (firmware
-correctly skipped). The transfer + flash completed (`Finished updating Tessel with local
-builds.`) and the board re-enumerated on USB — but **`t2-cli` can never connect** to the
-updated image (`version --usb` sits at `Looking for your Tessel...` indefinitely), whereas the
-factory image connects in seconds and `t2 restore` reconnects instantly.
+The freshly built **OpenWrt 24.10 (kernel 6.6)** sysupgrade image flashed successfully but
+the board never came back — `t2-cli` could never connect, and reading the flash back showed
+**all `0xFF`** (i.e. nothing had actually been written).
 
-**Root cause (diagnosed):** the on-device `spid`/`usbexecd` bridge that `t2-cli` talks to over
-USB cannot start on kernel 6.6. `tessel-tools` builds, installs, and is enabled on boot
-(`S60spid`/`S60usbexecd`), but `spid-start` runs `exec spid /dev/spidev32766.1 2 1 …` and the
-2016-era `spid` drives GPIO via the legacy `/sys/class/gpio` sysfs interface. On 6.6 the spidev
-node name/numbering is DTS-dependent (that node likely doesn't exist) and sysfs GPIO is
-deprecated/removed — so the coprocessor bridge never comes up.
+**Root cause (diagnosed):** an upstream `spi-rt2880.c` refactor dropped the driver's
+`hw_reset_count` guard. The MT7620's two SPI controllers **share one reset line**, so probing
+the second controller pulsed the reset a second time and knocked out the already-initialised
+flash controller.
 
-**Recovery:** every affected device was restored to the known-good factory image via the
-local-tarball path (`python -m http.server 8765` + `T2_RESTORE_URL`), which is reliable. A
-physical USB replug is sometimes needed to re-establish the data interface after heavy
-restore/flash cycles.
+**Fix:** patch `822-SPI-rt2880-reset-shared-spi-block-once.patch` re-adds the atomic guard so
+the shared SPI block is reset exactly once.
+
+A second, independent 6.x break affected the `spid`/`usbexecd` coprocessor bridge: the 2016-era
+`spid` drives GPIO via legacy sysfs and hardcoded global GPIO 2/1, but from kernel 6.6 the
+`gpio-ralink` driver uses `bgpio_init()` and the SoC gpiochip base moved off 0 (observed 512).
+**Fix:** `spid-start` now resolves bank 0's base at runtime; plus patch `999` for the CS1
+pinmux and a `rohm,dh2228fv` spidev whitelist entry (kernels ≥5.15 reject the bare `spidev`
+binding). All are carried in the production image.
+
+**Recovery (still the reliable path if a board is ever bricked):** restore via the
+local-tarball route (`python -m http.server 8765` + `T2_RESTORE_URL`). A physical USB replug
+is sometimes needed to re-establish the data interface after heavy restore/flash cycles.
 
 ---
 
@@ -71,14 +87,22 @@ restore/flash cycles.
 
 ## Release artifacts not published to GitHub
 
-**Status:** 📋 Ready to publish, not yet done.
+**Status:** 🔄 Partially resolved — **production firmware images are published**; the `t2-cli`
+`builds` release for `t2 update` is still missing.
 
-The release plumbing is in place:
+**What is published:** the production OpenWrt + Node images are attached to GitHub Releases on
+this repo — see
+[`v25.12.5-node8-r2`](https://github.com/aaronpowell/tessel-2-revive/releases/tag/v25.12.5-node8-r2)
+(the `.bin` sysupgrade image plus a `new_build_*.tar.gz` restore bundle for `t2 restore`). That
+covers the normal flashing path documented in
+[`production-image-and-release.md`](./production-image-and-release.md).
+
+The `t2-release` plumbing is also in place:
 - `t2-release` can assemble and publish artifacts
 - `t2-cli/resources/releases/builds.json` has a manifest entry pointing at `aaronpowell/t2-cli` GitHub Releases
 - Local tarballs are assembled at `t2-release/.release-work/...`
 
-**What's missing:** The `t2-cli` GitHub Release tagged `builds` has not been created and populated yet, so `t2 update` (without explicit `--firmware-path` / `--openwrt-path`) will fail with a 404.
+**What's still missing:** The `t2-cli` GitHub Release tagged `builds` has not been created and populated yet, so `t2 update` (without explicit `--firmware-path` / `--openwrt-path`) will fail with a 404.
 
 **How to fix:**
 ```bash
@@ -100,49 +124,55 @@ For `t2 restore`, if the default `new_build_next.tar.gz` URL is unavailable, use
 
 ## OpenWrt upstream uplift
 
-**Status:** 🔬 Attempted — build & flash succeed; **on-device bring-up blocked** by the `spid` bridge.
+**Status:** ✅ **COMPLETE.** Built, flashed, and hardware-validated end-to-end at
+**OpenWrt 25.12.5 / kernel 6.12.94**, released as `v25.12.5-node8-r2`.
 
-The current image is built from **OpenWrt Chaos Calmer 15.05-rc2** (2015, kernel 3.18), per the
-package feed pinned in `openwrt-tessel/config.mk:77`. This session targeted, built, and flashed
-**OpenWrt 24.10.x (kernel 6.6.144)** for the MT7620.
+The device previously ran **OpenWrt Chaos Calmer 15.05-rc2** (2015, kernel 3.18). It now runs
+25.12.5 with the Tessel JS runtime working: `t2 run` / `t2 push` deploy and execute scripts and
+blinky drives the on-board LEDs.
 
-**What now works end-to-end:**
-- The 24.10 tree builds a valid Tessel sysupgrade artifact
-  (`bin/targets/ramips/mt7620/openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin`), after
-  fixing several staging/toolchain build blockers (target sysroot visibility in `rules.mk`,
-  `opkg`, and a `urngd` CMake CRT-probe workaround).
-- `t2 update --openwrt-path` transfers, flashes, and reboots the device cleanly.
-- The board boots the new image and re-enumerates on USB.
+**How it was done:** as an **incremental hop ladder** (15.05 → 17.01 → 18.06 → 19.07 → 21.02 →
+22.03 → 23.05 → 24.10 → 25.12), hardware-gating each hop. Every blocker turned out to be a
+small, individually-diagnosable delta that a single 15.05→24.10 jump had hidden. Full per-hop
+detail in [`openwrt-incremental-upgrade.md`](./openwrt-incremental-upgrade.md).
 
-**What blocks it (the hard part):** `t2-cli` cannot reach the updated image because the
-`spid`/`usbexecd` coprocessor bridge does not start on kernel 6.6 — see *Hardware validation →
-OpenWrt 24.10 image* above. Fixing this requires porting the Tessel bridge to modern kernel
-interfaces:
-- add a **DTS spidev binding** so the SPI node exists (replacing the hard-coded
-  `/dev/spidev32766.1`), and
-- port `spid`'s GPIO handling from legacy `/sys/class/gpio` to **libgpiod / the gpio
-  character device** (or re-enable `CONFIG_GPIO_SYSFS` and fix numbering as a stopgap).
+**The fixes that made it work** (all carried in the production image):
 
-This is best debugged with an **MT7620 UART serial console**, which we do not yet have wired up.
+| Fix | What it solved |
+|---|---|
+| `822` shared-SPI reset guard | MT7620's two SPI controllers share a reset line; the refactored driver double-pulsed it → flash read all-`0xFF` → non-boot |
+| `spid-start` runtime base resolver | kernel ≥6.6 `gpio-ralink` uses `bgpio_init()`, moving the gpiochip base off 0 (observed 512) |
+| `999` CS1 pinmux | so the coprocessor enumerates as `/dev/spidev1.0` |
+| `rohm,dh2228fv` spidev whitelist | kernels ≥5.15 reject the bare `spidev` binding |
+| `CONFIG_MTD_SPLIT_FIRMWARE=y` | split the firmware partition into kernel + rootfs |
+| `CONFIG_MIPS_FP_SUPPORT=y` | **the decisive one** — OpenWrt strips the kernel FP emulator, but V8's JIT emits `cop1` at runtime, so JS SIGILL'd on the FPU-less 24KEc |
+| `/sys/class/leds/tessel:` LED path | `gpio-leds` device renamed on 6.x, so LED writes silently no-op'd |
+| INITRAMFS forced off | `make defconfig` defaults it **on** for this target, yielding a RAM-root image instead of a flashable squashfs |
 
-**Key finding (unchanged):** modern on-device Node.js is **not realistic** for the MT7620
-(MIPS32 soft-float). The uplift does **not** change this — Node stays at **8.11.3** regardless
-of OpenWrt version. The practical architecture is:
-- Keep `spid` and `usbexecd` on-device (C daemons, not Node) — but re-ported to modern SPI/GPIO
-- Use Node.js 8.11.3 for user scripts
-- Push more tooling host-side
+**Corrections to earlier assumptions in this document:**
+
+- **libgpiod was never needed.** Legacy `CONFIG_GPIO_SYSFS` is an upstream default in the
+  generic 6.12 config and works fine; only the gpiochip *base* had moved. The predicted
+  "port `spid` to libgpiod / the gpio character device" work did not have to happen.
+- **A soldered MT7620 UART console was never needed.** The **USB serial console** works on any
+  image and was sufficient to debug every hop.
+- **Node.js on-device is real, and stays at 8.11.3.** This constraint is unchanged and
+  deliberate — see *Node.js version on device* below. It is built in an in-ladder OpenWrt
+  19.07 toolchain (gcc-7.5 + musl, soft-float) and lifted onto 25.12, isolated under
+  `/opt/tessel` with its library closure on `LD_LIBRARY_PATH`.
+
+**Risks retired by the uplift:** the 2015 image's known-old SSH (weak KEX), EOL OpenSSL/TLS
+stack, 2015 WiFi stack, and ~10 years of missing security updates. The original analysis of the
+risk of *not* upgrading is preserved in
+[`security-threat-assessment.md`](./security-threat-assessment.md) for context.
 
 **Remaining risks:**
-- The `spid`/DTS re-port is genuine driver/bring-up engineering, not a config change
-- Firmware bootloader handoff during `t2 update` is still unreliable and must stay
-  human-supervised (see Hardware validation)
-- Tessel board-specific packages/patches/configs continue to need porting as upstream moves
 
-**Why it matters / risk of staying:** the current image has known-old SSH (weak KEX; requires
-`-oKexAlgorithms=+diffie-hellman-group1-sha1`), an EOL OpenSSL/TLS stack, a 2015 WiFi stack, and
-no security updates for ~10 years. A full risk breakdown for **not** upgrading (calibrated for an
-isolated, non-public, competently-managed network) plus the capability gaps is in
-[`security-threat-assessment.md`](./security-threat-assessment.md).
+- Firmware bootloader handoff during `t2 update` is still unreliable and must stay
+  human-supervised (see Hardware validation); `t2 restore` is the dependable path.
+- Tessel board-specific packages/patches/configs will continue to need porting as upstream
+  moves — the incremental ladder and the containerised build system make this tractable.
+- WiFi station-mode bring-up on 25.12 has not been exercised.
 
 ---
 
