@@ -176,9 +176,9 @@ time.
 The production image ships a first-boot `uci-defaults` script
 (`/etc/uci-defaults/99-tessel-hostname`) that sets the device hostname to
 **`tessel-<release>-<mac4>`** — the sanitized `RELEASE` (from `/etc/tessel-release`)
-plus the last 4 hex of the board's **stable factory WiFi MAC** (read from the
+plus the last 4 hex of the board's **factory WiFi MAC** (read from the
 `factory` MTD partition, the same source the original `Tessel-<MAC>` naming used).
-For example `tessel-v25-12-5-node8-r2-d3ab`.
+For example `tessel-v25-12-5-node8-r2-fc2c`.
 This replaces the stock OpenWrt default (`OpenWrt`) that otherwise shows up in
 `t2 list`.
 
@@ -186,9 +186,18 @@ The name is derived **on-device** at first boot (the MAC isn't known at build ti
 and includes the MAC tail so two boards flashed with the same release don't collide
 on the `<name>.local` mDNS name. The suffix comes from the factory partition rather
 than `eth0`'s address because on this board `eth0` is assigned a **random,
-locally-administered MAC each boot**, which would make the suffix non-deterministic;
-the factory MAC is burned in flash and identical across flashes. If the factory
-partition can't be read the script falls back to the first real netdev MAC.
+locally-administered MAC each boot**, which would make the suffix meaningless (it can
+even latch onto a transient USB-gadget interface). The factory MAC lives in flash, so
+it is stable across reboots and power-cycles. If the factory partition can't be read
+the script falls back to the first real netdev MAC.
+
+> **Note — the factory MAC is not permanent across a `t2 restore`.** It isn't a
+> vendor-burned address: `t2 restore` bulk-erases the flash and writes a *freshly
+> randomised* factory partition (`02:a3:<4 random bytes>`, see
+> `t2-cli/lib/tessel/restore.js`). So a destructive restore gives the board a new MAC
+> and therefore a new `-<mac4>` suffix. Within the life of one install the name is
+> stable; don't treat the suffix as a permanent serial number.
+
 `uci-defaults` scripts run once and are then whited
 out of the read-only squashfs, so this **never** clobbers a later rename — change the
 name anytime with:

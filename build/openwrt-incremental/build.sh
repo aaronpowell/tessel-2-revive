@@ -297,9 +297,11 @@ EOF
     # scripts run ONCE then get whited out of the read-only squashfs, so this never
     # clobbers a later `t2 rename` (which persists to the jffs2 overlay). Sanitizes
     # RELEASE (from /etc/tessel-release) to a hostname-safe token and appends the last
-    # 4 hex of the board's STABLE factory WiFi MAC (mt7620 EEPROM, the same source the
-    # original Tessel-<MAC> naming used) so the suffix is deterministic across flashes
-    # (eth0's MAC is a per-boot random locally-administered address, unusable here).
+    # 4 hex of the board's factory WiFi MAC (mt7620 EEPROM, the same source the
+    # original Tessel-<MAC> naming used). That MAC lives in flash so it's stable across
+    # reboots, unlike eth0's per-boot random locally-administered address (which could
+    # even latch onto a transient USB-gadget interface). Note it is NOT permanent: a
+    # destructive `t2 restore` rewrites the factory partition with a fresh random MAC.
     mkdir -p "$SRC/files/etc/uci-defaults"
     cat > "$SRC/files/etc/uci-defaults/99-tessel-hostname" <<'EOF'
 #!/bin/sh
