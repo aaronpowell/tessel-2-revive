@@ -172,7 +172,8 @@ risk of *not* upgrading is preserved in
   human-supervised (see Hardware validation); `t2 restore` is the dependable path.
 - Tessel board-specific packages/patches/configs will continue to need porting as upstream
   moves — the incremental ladder and the containerised build system make this tractable.
-- WiFi station-mode bring-up on 25.12 has not been exercised.
+- WiFi station mode on 25.12 is exercised end-to-end (join, DHCP, LAN discovery, `t2 run`
+  over WiFi, `t2 rename`) as of the r3 image — see *WiFi station mode and LAN discovery* below.
 
 ---
 
@@ -191,6 +192,41 @@ ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 root@<tessel>.local -i ~/.tessel
 modern KEX (curve25519-sha256), so current SSH clients and `t2-cli`'s SSH path connect without the
 legacy-KEX override. This is one of the concrete risk items retired by the incremental uplift (see
 [`risk-assessment-openwrt-18.06.md`](./risk-assessment-openwrt-18.06.md), T4).
+
+**The mirror image of this bit us in `t2-cli` itself.** The CLI bundled `ssh2` 0.6.1, whose
+key exchange list stops in 2014; 25.12's dropbear offers only `sntrup761x25519-sha512`,
+`curve25519-sha256` and `diffie-hellman-group14-sha256`. The two sets do not intersect, so every
+LAN connection failed the handshake — and because the connection code discarded the error, the CLI
+reported the board as *unprovisioned* rather than saying the handshake failed. `ssh2` is now on
+1.x and the error is logged. Worth remembering: "the device's SSH is too old" and "our SSH client
+is too old" produce the same symptom from the outside.
+
+---
+
+## WiFi station mode and LAN discovery
+
+**Status:** ✅ Validated on hardware (r3 image + current `t2-cli`).
+
+Getting `t2 list` / `t2 run` to work over WiFi needed fixes on both sides. On the **image** side:
+the stock OpenWrt `wifi-iface[0]` is an *AP*, so `t2 wifi` would have made the board broadcast
+your network's name instead of joining it; `rpcd-mod-iwinfo` and a mDNS responder were absent
+entirely; and OpenWrt ≥ 21.02 names the interface after the phy (`phy0-sta0`) while `t2-cli`
+hardcodes `wlan0`. See [`production-image-and-release.md`](./production-image-and-release.md).
+
+On the **CLI** side, three host-side faults each masked the next:
+
+- Discovery listened for multicast on UDP 5353, a port shared with Bonjour, avahi and browsers;
+  on Windows only one binder receives each datagram, so discovery succeeded roughly one run in
+  three. `t2-cli/lib/mdns.js` now queries with the RFC 6762 §5.4 **QU (unicast response) bit**
+  from an ephemeral port on every interface, so answers come straight back to us — 5/5 runs.
+- `t2-cli` bundled an `ssh2` too old to negotiate with modern dropbear (above).
+- `t2 run` deployed successfully and then printed nothing: it piped `process.stdin` into the SSH
+  channel, and a non-TTY stdin ends immediately, which closed the pty's write side and made
+  dropbear SIGHUP the script before it produced any output.
+
+**Known limitation:** the rt2800 radio is 2.4 GHz only, so a 5 GHz-only network is invisible to it.
+
+**Not yet exercised:** association persistence across a power cycle.
 
 ---
 
