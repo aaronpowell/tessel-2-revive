@@ -440,6 +440,18 @@ while uci -q get firewall.@zone[$i] >/dev/null; do
 	i=$((i+1))
 done
 
+# Let umdns answer on the WiFi network too. Stock ships `list network lan` only, so with
+# the station on `wwan` the board advertises _tessel._tcp on the vestigial wired LAN and
+# stays invisible to `t2 list` over WiFi -- the one path that actually matters. The init
+# script reads umdns.@umdns[-1].network to decide which interfaces to bind.
+if uci -q get umdns.@umdns[-1] >/dev/null; then
+	case " $(uci -q get umdns.@umdns[-1].network) " in
+		*" wwan "*) ;;
+		*) uci -q add_list umdns.@umdns[-1].network='wwan'
+		   uci -q commit umdns ;;
+	esac
+fi
+
 # Station mode on the first wifi-iface -- the one t2-cli writes to.
 if uci -q get wireless.@wifi-iface[0] >/dev/null; then
 	uci -q set wireless.@wifi-iface[0].mode='sta'
