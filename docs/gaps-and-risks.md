@@ -226,13 +226,12 @@ On the **CLI** side, three host-side faults each masked the next:
 
 **Known limitation:** the rt2800 radio is 2.4 GHz only, so a 5 GHz-only network is invisible to it.
 
-**Open image defect — `wireless.radio0.channel` is pinned to `1`.** OpenWrt's `wifi detect` writes
-a fixed channel, which is right for an AP and wrong for a station: the radio parks on channel 1 and
-never sees APs on 6 or 11. `wpa_supplicant` logs no association attempt at all and `iwinfo` reports
-`Channel: 0`, which looks like a driver fault rather than a config one. `uci set
-wireless.radio0.channel=auto` fixes it immediately and survives a reboot, so an already-configured
-board is fine — but a freshly flashed one can only join a channel-1 network. This needs to move
-into `98-tessel-wifi` next to `mode='sta'` for the next respin.
+**Fixed in r4 — `wireless.radio0.channel` was pinned to `1`.** OpenWrt's `wifi detect` writes a
+fixed channel, which is right for an AP and wrong for a station: the radio parked on channel 1 and
+never saw APs on 6 or 11. `wpa_supplicant` logged no association attempt at all and `iwinfo`
+reported `Channel: 0` with the board's own MAC as the access point, so it read as a driver fault
+rather than a config one. `98-tessel-wifi` now sets `channel='auto'`, which lets the station follow
+whatever channel the joined network is on.
 
 **Validated end-to-end on a clean r3 flash** (`4f3ad0c`), not just a live-patched board: every
 `uci-defaults` script applied on first boot, the board joined the network, DHCP issued a lease with
@@ -240,8 +239,14 @@ the `Tessel 2` vendor class on the *first* request, `t2 list --lan` and `t2 prov
 authorized it, `t2 run index.js --lan` streamed `BLINK 1..24` with the LEDs physically confirmed,
 and association, address and hostname all survived a power cycle.
 
+**Re-gated on a clean r4 flash** (`2319761`) to prove the channel fix: from a factory-fresh flash,
+with no manual `uci` intervention, the board associated on **channel 11** — the case r3 could not
+do — took a lease, and ran blinky over WiFi, all of which survived a power cycle.
+
 Note that after `t2 restore` the USB data interface does not always re-enumerate across a power
-cycle; LAN/SSH still works, so a USB timeout here is not a boot failure.
+cycle; LAN/SSH still works, so a USB timeout here is not a boot failure. A freshly restored board
+also needs a minute or so before it answers on USB — until then `t2 list` reports
+`LIBUSB_TRANSFER_STALL`, which is the board still booting, not a flash failure.
 
 ---
 
