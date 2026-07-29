@@ -406,6 +406,14 @@ uci -q get wireless.@wifi-iface[0] >/dev/null || /sbin/wifi config >/dev/null 2>
 # Dedicated DHCP-client network for the station interface.
 uci -q set network.wwan=interface
 uci -q set network.wwan.proto='dhcp'
+# Identify ourselves in the DHCP handshake (option 60, vendor class identifier).
+# Without this the only fingerprint a router sees is BusyBox udhcpc's stock option-55
+# request list, which is identical across thousands of embedded Linux devices -- UniFi
+# matched a real Tessel to "BITMAIN Antminer L3+" on exactly that collision. Our WiFi MAC
+# is locally administered (02:a3:..., written by `t2 restore`) so there is no OUI to fall
+# back on either. netifd emits `-V ""` to clear udhcpc's built-in default and then our
+# `-x 0x3c:`, so this string is the only vendor class on the wire.
+uci -q set network.wwan.vendorid='Tessel 2'
 # Move the board's own LAN off 192.168.1.0/24. That is OpenWrt's default *and* by far
 # the most common home-router subnet, so leaving it would routinely put br-lan and the
 # WiFi lease in the SAME subnet once the board joins a typical network -- two

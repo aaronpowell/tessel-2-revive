@@ -34,6 +34,7 @@ config injections), plus a **baked userspace Node runtime**.
 | Tessel JS | `/usr/lib/node/{tessel,tessel-export}.js` (also dup'd under `/opt/tessel/lib/node/`) |
 | Release marker | `/etc/tessel-release` (build metadata — see §5) |
 | Default hostname | `/etc/uci-defaults/99-tessel-hostname` sets `tessel-<release>-<mac4>` on first boot (see §5) |
+| WiFi defaults | `/etc/uci-defaults/98-tessel-wifi` sets station mode, pins `wlan0`, moves LAN to `192.168.99.1/24`, and sends DHCP vendor class `Tessel 2` |
 
 ### Why Node is lifted, not built in-tree
 
