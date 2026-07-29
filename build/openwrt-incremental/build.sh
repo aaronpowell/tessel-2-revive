@@ -384,10 +384,12 @@ EOF
     # Putting it in `wan` would have the firewall silently reject exactly the traffic
     # the CLI depends on.
     #
-    # The iface is left ENABLED with an unmatched placeholder SSID so that `wlan0`
-    # exists from first boot: `t2 wifi -l` runs `iwinfo wlan0 scan`, which needs a real
-    # interface. A psk2 placeholder key (not an open network) means it can never
-    # associate to a spoofed AP while unconfigured.
+    # The iface is left DISABLED, matching the radio-off-by-default posture in
+    # docs/security-threat-assessment.md. That costs very little usability: joining a
+    # network with `t2 wifi -n <ssid> -p <pw>` enables the radio itself, and if you
+    # scan first, t2-cli already detects the missing wlan0 and tells you to run
+    # `t2 wifi --on` (lib/tessel/wifi.js checkNoSuchDeviceError). A placeholder
+    # ssid/key marks the iface as unconfigured.
     #
     # Same runs-once + squashfs-whiteout mechanism as the hostname script, so a later
     # `t2 wifi` / `uci` edit is never clobbered.
@@ -433,7 +435,7 @@ if uci -q get wireless.@wifi-iface[0] >/dev/null; then
 	uci -q set wireless.@wifi-iface[0].ssid='tessel-unconfigured'
 	uci -q set wireless.@wifi-iface[0].encryption='psk2'
 	uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
-	uci -q set wireless.@wifi-iface[0].disabled='0'
+	uci -q set wireless.@wifi-iface[0].disabled='1'
 	uci -q delete wireless.radio0.disabled
 	uci -q commit wireless
 fi
