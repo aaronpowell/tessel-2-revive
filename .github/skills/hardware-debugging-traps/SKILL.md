@@ -123,6 +123,34 @@ Cheap mitigation, applied at write time:
 - Where you *must* hardcode a boundary, cite the mechanism, not just the number, so the
   next reader can re-derive it.
 
+## Trap 8 — a warning that is present but not where the mistake happens
+
+"Is it documented?" is the wrong test. The right one is **would a reader hit this before
+making the mistake?** Those come apart constantly, and only the first one is easy to check,
+which is why the first one is the one people check.
+
+A real instance from this repo: `tools/README.md` said *"times out after 45 s with exit
+code 3 if no board responds"*, and fourteen lines further down, under **Gotchas**,
+disclosed that a *successful* run reports the USB transport's `close` value rather than the
+remote command's status. Both facts were correct and both were written down. But someone
+wiring the script into a gate reads the line about exit code 3, concludes exit codes are
+meaningful, asserts on the status, and ships a check that passes unconditionally — the
+exact failure the Gotchas entry existed to prevent. The audit question "is the exit-code
+behaviour documented?" returns yes. The reader is still wrong.
+
+Note this is the *same* structure as the traps above, applied to prose: a check ("it's
+documented") that cannot fail in the case you care about, and therefore proves nothing.
+
+- Put the caveat at the **point of the claim**, not in a section that collects caveats.
+  Sections like *Gotchas*, *Known issues* and *Notes* are where warnings go to be
+  technically present.
+- Ask where the reader is standing when they make the error, and put the correction
+  *there*. `getting-started.md` gained its verify-the-checksum line at the one step where
+  a reader handles release bytes by hand — not in a security section they will not be
+  reading at that moment.
+- If a fact is dangerous enough to warrant a warning, it is dangerous enough to interrupt
+  the sentence that would otherwise mislead.
+
 ## Practical checklist
 
 Before claiming something is verified:
@@ -138,6 +166,8 @@ Before claiming something is verified:
 8. Am I asserting on output, or on an exit code that may not mean what I think?
 9. If I am writing this down: is it an invariant or a default, and did I record what
    version I measured it against?
+10. Is the warning where the reader will be standing when they make the mistake, or just
+    somewhere in the document?
 
 ## When you are wrong
 
