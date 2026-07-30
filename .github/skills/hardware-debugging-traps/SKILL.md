@@ -48,6 +48,18 @@ downloaded a stale tarball. The file on disk was correct. What was served was no
 Generally: the artifact you validated, the artifact you shipped, and the artifact the
 consumer received are three different things until you have proved otherwise.
 
+The same shape shows up without a server anywhere in sight: a `t2` process that had
+apparently finished was still holding the board's USB handle almost half an hour later,
+so every probe failed with `LIBUSB_ERROR_ACCESS` — an error that reads like a driver
+problem and points you at completely the wrong thing. **Before concluding the code is
+broken, check whether the environment is still holding state from an earlier run.**
+Ports, device handles, background processes, caches and mounted paths all persist longer
+than you expect.
+
+And when you think you've found the holder, prove it: reproduce the failure with the
+suspect alive, remove it, and confirm the same command now succeeds. A fix that isn't
+demonstrated to flip the result is a guess that happened to be followed by a success.
+
 ## Trap 3 — a gate that structurally cannot detect the failure
 
 To test that an update **preserves user configuration**, you must run an *update* on a

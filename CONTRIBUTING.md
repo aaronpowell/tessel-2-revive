@@ -37,6 +37,9 @@ A few behaviours look like faults and aren't. Please check
   third, is a known discovery race. Retry two or three times before reporting.
 - `t2 update` requires **USB**; it refuses over LAN.
 - `t2 restore` does **not** reboot the board — unplug and replug, then wait ~3 minutes.
+- `LIBUSB_ERROR_ACCESS` means **another process holds the device**, not a driver
+  problem. Only one process can claim the board over USB at a time; look for a stray
+  `t2` process still running and kill it.
 
 If it still fails after that, it's a real bug and we'd like to know.
 

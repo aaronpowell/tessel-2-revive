@@ -36,6 +36,7 @@ does directly.
 | `t2 provision --usb` → `'--usb' expects a value` | `t2 provision` has no `--usb` flag; it is USB-only by definition. The global flag parser tries to consume the next argument. Just run `t2 provision`. |
 | `t2 update --lan` aborts | `Must have Tessel connected over USB to complete update.` Updates are USB-only regardless of transport availability. |
 | `LIBUSB_TRANSFER_STALL`, up to ~1 min after replugging | The board is **booting**. Not a bad flash. Wait it out before re-flashing anything. |
+| `LIBUSB_ERROR_ACCESS` | **Another process holds the device.** This is not a driver or permissions problem and Zadig will not help — see below. |
 | `No Authorized Tessels Found` on the first attempt, then success | Discovery races the authorisation probe. Retry two or three times, unchanged, before investigating. Frequently preceded by `WARN Detected a Tessel that may be booting.` |
 | `OPEN ERROR: Not connected` from `lan-exec.js` | Transient WiFi blip. Retry once. |
 | `Invalid status code on build server request: 404` | The `t2 update` feed at `raw.githubusercontent.com/<repo>/main/releases/builds.json` is unreachable — most likely the repo is private, or the branch/path is wrong. |
@@ -43,6 +44,48 @@ does directly.
 
 Because several of these are timing-dependent, **a single failing run is not evidence.**
 Repeat before concluding.
+
+## Only one process can hold the USB device
+
+`LIBUSB_ERROR_ACCESS` reads like a driver or permissions fault and sends people to Zadig.
+It usually isn't. **It means something else already has the device claimed.**
+
+Check the device is genuinely healthy first:
+
+```powershell
+Get-PnpDevice -PresentOnly | Where-Object InstanceId -like "*VID_1209*PID_7551*"
+```
+
+If the composite device and its three `MI_00/01/02` interfaces all report `Status: OK`,
+the hardware and driver are fine and the problem is contention. Find the holder:
+
+```powershell
+Get-Process node | Select-Object Id,StartTime,@{n='cmd';e={
+  (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine}}
+```
+
+Look for a `tessel-2.js` process — **including one that should have exited.** This was
+observed with a `node bin\tessel-2.js version` still alive 28 minutes after it was run,
+silently holding the handle. Several `t2` subcommands do not reliably exit; `t2 list`
+never does by design, and others can hang the same way. Kill it by its literal PID and
+retry.
+
+Two consequences worth internalising:
+
+- **Two people, sessions or agents cannot probe USB at the same time.** The second gets
+  `LIBUSB_ERROR_ACCESS`. Coordinate before assuming the tooling is broken.
+- **A leftover process from an earlier run is the default suspect.** This is the same
+  failure shape as a stale HTTP server still bound to a port — the environment held
+  state you assumed was clean. Check before blaming the code.
+
+Prove it rather than guessing: reproduce the error with the suspected holder alive, kill
+it, and confirm the same command now succeeds. If it doesn't flip, contention wasn't the
+cause.
+
+`Get-PnpDevice` without `-PresentOnly` also lists **ghost entries** from earlier
+enumerations, showing `Status: Unknown` with different instance-path suffixes. They are
+harmless leftovers, but they make it look like several boards are attached. Always pass
+`-PresentOnly` when you want the truth.
 
 ## Reading device state
 

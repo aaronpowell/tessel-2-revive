@@ -54,6 +54,15 @@ because it authenticates with the key at `~/.tessel/id_rsa`.
   the status. `lan-exec.js` streams output but likewise always exits 0.
 - **`OPEN ERROR: Not connected` from `lan-exec.js` is usually a transient WiFi blip.**
   Retry once before concluding anything is broken.
+- **`OPEN ERROR: LIBUSB_ERROR_ACCESS` from `usb-exec.js` means another process holds
+  the device**, not that your driver or permissions are wrong. Only one process can
+  claim the Tessel over USB at a time, so two people (or two agent sessions) cannot
+  probe concurrently. Confirm the hardware is fine with
+  `Get-PnpDevice -PresentOnly | Where-Object InstanceId -like "*VID_1209*PID_7551*"` —
+  if the composite device and its three interfaces are all `Status: OK`, it is
+  contention. Then look for a stray `tessel-2.js` process and kill it by PID; several
+  `t2` subcommands do not reliably exit and keep the handle open long after they
+  appear finished.
 - **The device is busybox, not coreutils.** `hostname` is not present, for example —
   read `/proc/sys/kernel/hostname` or `uci get system.@system[0].hostname` instead.
   Check that a command exists before treating its absence as a finding.
