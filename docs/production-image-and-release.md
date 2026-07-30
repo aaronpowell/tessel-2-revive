@@ -245,8 +245,19 @@ uci set system.@system[0].hostname='<name>'; uci commit system
    - `sha` must equal the trimmed contents of `/etc/tessel-version` exactly.
    - `version` must be valid semver with a **dotted numeric** prerelease
      (`25.12.5-r.5`, not `-r5`, or `r10` would sort below `r2`).
-   - Keep older entries: `t2 update` looks up the device's current sha in the
-     feed, and a board whose sha is missing hits a crash path.
+   - Keep recent entries: `t2 update` looks up the device's current sha in the
+     feed to work out what the board is running. A board whose sha is missing is
+     **not** a crash — since `t2-cli` `f773ea5` the lookup returns `undefined`,
+     `controller.js` guards the deref, and the update proceeds after logging
+     *"Could not match the build running on X to a known release; updating
+     anyway."* What you lose is the version comparison, i.e. the
+     "already on the latest firmware version" check, not correctness.
+   - **r1 and r2 are deliberately absent from the feed.** Those releases only
+     ship `new_build_*.tar.gz`, which is a *restore* bundle (u-boot + squashfs
+     members) rather than the update format, which needs a tarball containing
+     `openwrt.bin`. Adding entries for them would make
+     `t2 update --version 25.12.5-r.1` download a restore bundle and fail
+     confusingly. Boards on r1/r2 should move forward with `t2 restore`.
 8. Verify the **published** bytes, not the local ones — download the assets back
    and hash them. A stale local server or a mis-uploaded asset is invisible
    otherwise.

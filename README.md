@@ -1,124 +1,159 @@
 # Tessel 2 Revival
 
-A personal-use revival of the [Tessel 2](https://tessel.io) development board ecosystem. The original project has been unmaintained since ~2018; this repo is the coordination hub for modernising it enough to be usable on Windows 11 / WSL2 with current Node.js tooling.
+Bringing the [Tessel 2](https://en.wikipedia.org/wiki/Tessel_%28company%29) development
+board back to life on a modern toolchain.
 
-## Quick orientation for agents
+Tessel 2 was a 2015-era JavaScript-on-hardware board: a MediaTek MT7620N running
+OpenWrt Linux with a real Node.js runtime, paired with an Atmel SAMD21 coprocessor for
+GPIO/SPI/I²C/UART/ADC. The company wound down and the project has been unmaintained
+since roughly 2018. The boards still work — but the OS on them was OpenWrt 15.05
+(kernel 3.18, 2015), the on-device Node was 4.2.1, the host CLI would not run on a
+current Node, and the update/release infrastructure it depended on no longer exists.
 
-This repository is optimised for agent-assisted iteration. Read these files in order:
+This repository is the record of fixing all of that, and the place the resulting
+firmware images are published from.
 
-1. [`docs/architecture.md`](docs/architecture.md) — hardware and software stack overview
-2. [`docs/how-it-works.md`](docs/how-it-works.md) — deep-dive explainer: how OpenWrt, on-device Node.js, and code deploy actually work
-3. [`docs/repos.md`](docs/repos.md) — every forked repo, what changed, and where it lives
-4. [`docs/getting-started.md`](docs/getting-started.md) — how to flash a board and run an app today
-5. [`docs/gaps-and-risks.md`](docs/gaps-and-risks.md) — known incomplete work and technical risk areas
-6. [`docs/external-references.md`](docs/external-references.md) — upstream Tessel docs, datasheets, and community links
+## What state is it in?
 
-The forked repos are included as git submodules under [`repos/`](repos/).
+**Working.** The board now runs **OpenWrt 25.12.5 / kernel 6.12.94** with an on-device
+**Node.js 8.11.3** runtime, and the original developer workflow — `t2 run`, `t2 push`,
+`t2 update`, WiFi, LAN discovery — works again. Every step of this was validated on
+real hardware, not just built.
 
-### OpenWrt 25.12 uplift & production firmware
+| | |
+|---|---|
+| Device OS | OpenWrt 25.12.5, kernel 6.12.94 (from 15.05 / 3.18) |
+| On-device Node | 8.11.3, soft-float MIPS (from 4.2.1) |
+| Host CLI | `t2-cli` runs on current Node.js (20+) |
+| Deploy | `t2 run` / `t2 push` deploy and execute JS on hardware |
+| WiFi | Station mode works; board joins a network unattended after flashing |
+| Discovery | mDNS/LAN discovery and SSH work from Windows |
+| Updates | `t2 update` pulls from this repo's release feed and preserves your config |
+| Latest release | [`v25.12.5-node8-r5`](https://github.com/aaronpowell/tessel-2-revive/releases/latest) |
 
-The board has been brought forward from its 2016 OpenWrt 15.05 (Chaos Calmer)
-factory image all the way to **OpenWrt 25.12.5 / kernel 6.12.94**, with an
-on-device **Node.js 8.11.3** runtime and the Tessel JS library — fully
-hardware-validated (`t2 run` blinks the LEDs).
+Known gaps and rough edges are tracked honestly in
+[`docs/gaps-and-risks.md`](docs/gaps-and-risks.md).
 
-> **📦 Just want to flash a board?** Grab the latest prebuilt image from
-> [**Releases**](https://github.com/aaronpowell/tessel-2-revive/releases/latest).
-> Each release ships a `new_build_*.tar.gz` restore bundle (use this with `t2 restore`)
-> and the raw `.bin` sysupgrade image. Flashing steps are in
-> [`docs/production-image-and-release.md`](docs/production-image-and-release.md).
->
-> Since `v25.12.5-node8-r2`, a freshly flashed board names itself
-> `tessel-<release>-<mac4>` (e.g. `tessel-v25-12-5-node8-r2-fc2c`) instead of showing up
-> as the stock `OpenWrt` — so you can tell boards apart in `t2 list`. Rename anytime with
-> `t2 rename <name>`.
+## Just want to flash a board?
 
-See:
+Grab the latest image from
+[**Releases**](https://github.com/aaronpowell/tessel-2-revive/releases/latest). Each
+release since `r4` ships three assets:
 
+| Asset | Use |
+|---|---|
+| `tessel-restore.tar.gz` | Full restore over USB (`t2 restore`) — use this on a board that is on old firmware or is not booting |
+| `tessel-update.tar.gz` | In-place update of a board already on a 25.12 image (`t2 update`) — preserves your WiFi config and hostname |
+| `tessel-25.12-PROD-node8-r5.bin` | The raw sysupgrade image, if you want to flash it yourself |
+
+> **Note:** the older `r1` and `r2` releases ship a differently-named
+> `new_build_*.tar.gz` restore bundle and are not in the `t2 update` feed. Start from
+> the latest release.
+
+Flashing steps, validation gates, and how to build the image yourself are in
+[`docs/production-image-and-release.md`](docs/production-image-and-release.md). A
+first-board walkthrough is in [`docs/getting-started.md`](docs/getting-started.md).
+
+A freshly flashed board names itself `tessel-<release>-<mac4>` (e.g.
+`tessel-v25-12-5-node8-r5-fc2c`) rather than showing up as the stock `OpenWrt`, so you
+can tell boards apart in `t2 list`. Rename it any time with `t2 rename <name>`.
+
+## Documentation
+
+**Understanding the hardware and the stack**
+
+- [`docs/architecture.md`](docs/architecture.md) — the two-processor design, the SPI
+  bridge, and how a `led[0].toggle()` becomes a pin change
+- [`docs/how-it-works.md`](docs/how-it-works.md) — the explainer: is OpenWrt a real
+  Linux distro, is that a real Node.js binary, which npm packages can you actually push
+- [`docs/external-references.md`](docs/external-references.md) — upstream Tessel docs,
+  datasheets, community links
+
+**Using it**
+
+- [`docs/getting-started.md`](docs/getting-started.md) — fresh board to running app
 - [`docs/production-image-and-release.md`](docs/production-image-and-release.md) —
-  **start here for the production image**: what's in it, how to build/flash/validate, `/etc/tessel-release`, and how to cut a release
-- [`docs/openwrt-incremental-upgrade.md`](docs/openwrt-incremental-upgrade.md) —
-  the per-hop 15.05 → 25.12 root-cause roadmap (every break + fix, pinned to source)
-- [`docs/openwrt-upgrade-progress.md`](docs/openwrt-upgrade-progress.md) —
-  the narrative journey and lessons learned
-- [`build/openwrt-incremental/`](build/openwrt-incremental/) — the containerised
-  build system (Dockerfile, `build.sh`, the Tessel DTS/patches/overlay, and the node-8 payload scripts)
+  what is in the production image, how to build/flash/validate it, and how to cut a
+  release
+- [`tools/`](tools/) — small scripts for running a shell command on a board over USB
+  or SSH, which `t2-cli` itself cannot do
 
-### Cloning on Windows
+**How the uplift was done** (the interesting part, if you're here from a blog post)
 
-`repos/openwrt` and `repos/uboot-mt7620` are marked `update = none` — they are large, Linux-only build inputs and are skipped automatically by `git clone --recurse-submodules` on Windows. A standard clone gives you everything needed for CLI and firmware work:
+- [`docs/openwrt-incremental-upgrade.md`](docs/openwrt-incremental-upgrade.md) — the
+  per-hop 15.05 → 25.12 roadmap: every single thing that broke, the root cause, and
+  the fix, pinned to upstream source
+- [`docs/openwrt-upgrade-progress.md`](docs/openwrt-upgrade-progress.md) — the
+  narrative version, including the dead ends
+- [`docs/repos.md`](docs/repos.md) — every forked repo and what changed in it
+- [`docs/gaps-and-risks.md`](docs/gaps-and-risks.md) — what is still incomplete
+- [`docs/security-threat-assessment.md`](docs/security-threat-assessment.md) and
+  [`docs/risk-assessment-openwrt-18.06.md`](docs/risk-assessment-openwrt-18.06.md) —
+  assessments written along the way
 
-```powershell
-git clone --recurse-submodules https://github.com/aaronpowell/tessel-2-revive.git
-```
-
-To also initialise the Linux build repos (WSL/Linux only):
-```bash
-git submodule update --init repos/openwrt repos/uboot-mt7620
-```
-
-### Agent sessions and OpenWrt
-
-Agent sessions that need to modify OpenWrt package files should be started from **WSL**, where the repo already lives at `/home/aaron/code/github/tessel/openwrt`. The `t2-build` Docker Compose setup clones openwrt internally and does not require it on the Windows filesystem.
-
-## Milestone definition (first revival target)
-
-On **Windows 11 / WSL2** with **current Node.js LTS**:
-
-- Install the revived `t2-cli` from the fork
-- Recover / provision a board over USB without depending on any Tessel-owned infrastructure
-- Update OpenWrt + SAMD21 firmware from fork-owned release artifacts
-- Reach the board over USB and SSH
-- `t2 run` / `t2 push` JavaScript on real hardware
-
-**In-scope module libraries for this milestone:**
-`tessel`, `ambient-attx4`, `climate-si7020`, `relay-mono`, `servo-pca9685`, `accel-mma84`
-
-**Explicit non-goals (deferred):**
-macOS/Linux parity, full module ecosystem, major OpenWrt upstream uplift, camera/audio/RFID/BLE, OTA/fleet features.
+The short version of the uplift: a single 15.05 → 25.12 jump fails in ways that are
+impossible to diagnose, because a decade of breakages land at once. Doing it as an
+**incremental hop ladder** — 15.05 → 17.01 → 18.06 → 19.07 → 21.02 → 22.03 → 23.05 →
+24.10 → 25.12, flashing and gating real hardware at every rung — turned one
+intractable problem into eight small, individually-diagnosable ones.
 
 ## Repository layout
 
 ```
 tessel-2-revive/
-├── README.md                  ← you are here
-├── docs/
-│   ├── architecture.md        ← T2 hardware/software stack
-│   ├── how-it-works.md        ← deep-dive: OpenWrt, Node.js, deploy flow
-│   ├── repos.md               ← forked repo inventory
-│   ├── getting-started.md     ← flash + hello world walkthrough
-│   ├── gaps-and-risks.md      ← known gaps, risks, next steps
-│   └── external-references.md ← upstream docs + datasheets
-└── repos/                     ← git submodules (one per forked repo)
-    ├── t2-cli/
-    ├── t2-firmware/
-    ├── t2-build/
-    ├── t2-release/
-    ├── openwrt-tessel/
-    ├── openwrt/
-    └── uboot-mt7620/
+├── docs/                      # see above
+├── build/openwrt-incremental/ # the containerised OpenWrt build system:
+│                              #   Dockerfile, build.sh, board DTS,
+│                              #   kernel patches, overlay, node-8 payload scripts
+├── tools/                     # usb-exec.js / lan-exec.js hardware probes
+├── tessel-scripts/            # sample scripts to run on a board
+├── releases/builds.json       # the `t2 update` feed
+└── repos/                     # git submodules: the forked upstream repos
 ```
 
-## Current status (July 2026)
+The forks under `repos/` are where the actual code changes live —
+[`docs/repos.md`](docs/repos.md) explains what each one is and what was changed:
 
-| Area | Status |
-|------|--------|
-| Host CLI modernisation | ✅ Done — runs on Node 20+ / WSL2 / Windows |
-| GitHub-native release plumbing | ✅ Done — `t2-release` reworked |
-| SAMD21 firmware build | ✅ Builds locally |
-| U-Boot build | ✅ Builds locally |
-| OpenWrt legacy image build | ✅ Builds via Docker (Ubuntu 18.04 container) |
-| Release artifacts assembled | ✅ Local tarballs + `builds.json` generated |
-| Board provisioning (Windows USB) | ✅ Done — run `t2-cli` natively in Windows PowerShell (avoids usbipd/WSL quirks) |
-| Firmware flashed to hardware | ✅ Done — flashed + validated via `t2 restore` |
-| Hello-world app on device | ✅ Done — `t2 run` deploys and blinky drives LED0/LED1 |
-| Module library compatibility | ✅ In-scope libraries audited + test-modernised |
-| **OpenWrt upstream uplift** | ✅ **Complete — 25.12.5 / kernel 6.12.94 + Node 8.11.3, released as [`v25.12.5-node8-r2`](https://github.com/aaronpowell/tessel-2-revive/releases/latest)** |
-| Default device hostname | ✅ Done — self-names `tessel-<release>-<mac4>` instead of `OpenWrt` |
-| WiFi station mode on 25.12 | ⏳ Not yet exercised |
-| `t2 update` (no explicit paths) | ⚠️ Needs the `t2-cli` `builds` release published — use `t2 restore` or explicit `--openwrt-path` |
+| Submodule | Role |
+|---|---|
+| `t2-cli` | The `t2` host CLI — modernised, plus WiFi/mDNS/SSH/update fixes |
+| `t2-firmware` | SAMD21 firmware and the on-device Tessel JS runtime |
+| `openwrt-tessel` | OpenWrt packages (including the Node.js package) |
+| `t2-build` | Containerised build tooling |
+| `t2-release` | Release artifact assembly |
+| `openwrt`, `uboot-mt7620` | Large Linux-only build inputs |
 
-## Related upstream organisations
+## Working with this repo
 
-- [github.com/tessel](https://github.com/tessel) — original Tessel GitHub org (unmaintained)
-- [tessel.io](https://tessel.io) — project website (may be stale)
+```bash
+git clone --recurse-submodules https://github.com/aaronpowell/tessel-2-revive.git
+```
+
+`repos/openwrt` and `repos/uboot-mt7620` are marked `update = none` in
+[`.gitmodules`](.gitmodules) — they are large, Linux-only build inputs and are skipped
+by default. A standard clone gives you everything needed for CLI, firmware, and image
+work. To pull them too (Linux or WSL only):
+
+```bash
+git submodule update --init repos/openwrt repos/uboot-mt7620
+```
+
+Building the OpenWrt image does **not** require them; the build under
+[`build/openwrt-incremental/`](build/openwrt-incremental/) fetches its own sources
+inside a container.
+
+### Host platform
+
+Development and validation were done on **Windows 11** with Node.js 20+, running
+`t2-cli` natively in PowerShell (which avoids USB passthrough quirks) and using Docker
+for the OpenWrt builds. Nothing here is deliberately Windows-only — the CLI is plain
+Node.js and the image build is containerised — but macOS and Linux are untested, so
+expect to hit small things. Reports welcome.
+
+## Related
+
+- [github.com/tessel](https://github.com/tessel) — the original Tessel GitHub org
+  (unmaintained)
+- [tessel.io](https://tessel.io) — the original project website (stale)
+- Upstream T2 documentation is archived at
+  [tessel.gitbooks.io/t2-docs](https://tessel.gitbooks.io/t2-docs/content/)

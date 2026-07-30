@@ -104,7 +104,7 @@ t2-cli (Node.js)
 
 ### On-device Node.js runtime
 
-The device runs a genuine, unmodified-source **Node.js v8.11.3** cross-compiled for MIPS, packaged by [`openwrt-tessel/package/node/node/Makefile`](../repos/openwrt-tessel/package/node/node/Makefile). Key constraints baked into that build:
+The device runs a genuine, unmodified-source **Node.js v8.11.3** cross-compiled for MIPS, packaged by [`openwrt-tessel/package/node/node/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/node/node/Makefile). Key constraints baked into that build:
 
 | Build flag | Effect |
 |-----------|--------|
@@ -215,10 +215,21 @@ SAMD21 firmware executes GPIO/peripheral command
 
 ## OpenWrt image
 
-The device OS is a custom build of OpenWrt (legacy Barrier Breaker era, targeting `ramips/mt7620`).
+The device OS is a build of **OpenWrt 25.12.5** (kernel 6.12.94) targeting
+`ramips/mt7620`, plus a thin Tessel overlay: the board DTS, a small number of kernel
+patches, two kernel config injections, and the `tessel-tools` package that starts
+`spid` and `usbexecd`.
 
 - Image type: `squashfs-sysupgrade`
-- Output: `openwrt/bin/ramips/openwrt-ramips-mt7620-tessel-squashfs-sysupgrade.bin`
-- Build environment: Ubuntu 18.04 container via `t2-build/openwrt-env.sh`
+- Output: `build/openwrt-incremental/output/tessel-25.12-PROD-node8-r<n>.bin`
+- Build environment: containerised — see
+  [`build/openwrt-incremental/`](../build/openwrt-incremental/), which builds the whole
+  incremental hop ladder as well as the final production image
 
-See [`repos.md`](repos.md) for details on the build process.
+The board originally shipped OpenWrt **15.05 (Chaos Calmer, kernel 3.18)**. How it got
+from there to 25.12 is documented in
+[`openwrt-incremental-upgrade.md`](openwrt-incremental-upgrade.md), and what is in the
+production image specifically is in
+[`production-image-and-release.md`](production-image-and-release.md).
+
+See [`repos.md`](repos.md) for the wider repo inventory.
