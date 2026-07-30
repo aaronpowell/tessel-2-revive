@@ -34,7 +34,9 @@ node tools/usb-exec.js "uci show wireless"
 Requires the board to be plugged in over USB. No provisioning, no network, and no SSH
 key needed — it speaks the SAMD21 USB bridge protocol.
 
-Times out after 45 s with exit code 3 if no board responds.
+Times out after 45 s with exit code 3 if no board responds. That is the *only* meaningful
+exit code it produces — a successful run does not report the remote command's status. See
+[Gotchas](#gotchas) before asserting on it in a script.
 
 ## `lan-exec.js` — over LAN/SSH
 
