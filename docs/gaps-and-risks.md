@@ -181,7 +181,7 @@ returns `LEGACY`, the new one `MODERN`, and `Modern sysupgrade detected` now app
 > places. Detecting an image's era by grepping for a function name is a trap — it needs re-fixing
 > at every release that reorganises the upgrade scripts.
 
-**Cause 2 — `98-tessel-wifi` clobbers restored WiFi credentials. OPEN.**
+**Cause 2 — `98-tessel-wifi` clobbered restored WiFi credentials. FIXED in r5** (`ab51d6a`).
 
 uci-defaults live in the squashfs, so after a sysupgrade — when the overlay is fresh — every script
 in `/rom/etc/uci-defaults/` runs again. `98-tessel-wifi` sets `ssid`/`key`/`disabled`
@@ -204,15 +204,48 @@ Corroborated end-to-end by a real `t2 update --force` with Cause 1 fixed: the
 `wlan0` did not exist. Losing *only* the wireless config is the signature of a post-restore clobber,
 not a failed backup.
 
-**Fix:** guard the credential and enable lines in `build/openwrt-incremental/build.sh` so they seed
-only a genuinely unconfigured radio, leaving the structural settings (mode, network, ifname,
-channel, vendorid, LAN, firewall, umdns) unconditional and idempotent. `encryption` must move inside
-the guard too, or a user on an open or WPA3 network is forced back to `psk2`.
+**Fix (shipped in r5):** the credential and enable lines in `build/openwrt-incremental/build.sh` are
+now guarded so they seed only a genuinely unconfigured radio, while the structural settings (mode,
+network, ifname, channel, vendorid, LAN, firewall, umdns) stay unconditional and idempotent.
+`encryption` is inside the guard too, so a user on an open or WPA3 network is not forced back to
+`psk2`.
 
-`99-tessel-hostname` should be audited for the same bug class — if it re-asserts the generated
-hostname on every new rootfs it will silently undo `t2 rename` on update. Note that "run once"
-markers written to the overlay are useless here: the overlay reset is precisely the event they need
-to survive.
+The guard keys off the **current `ssid` value**, not a marker file. That matters twice over: a
+marker written to the overlay is useless because the overlay reset is precisely the event it must
+survive, and an already-configured r≤4 board never wrote a marker at all — so on the r4→r5 update
+the ssid value is the *only* thing that can distinguish "the user's network" from "unconfigured".
+The values treated as unconfigured are empty, `OpenWrt`, and `tessel-unconfigured`. `OpenWrt` is
+required: `/lib/wifi/mac80211.uc:112` generates `ssid='OpenWrt'` when the board has no default
+(there is no `ssid` key in `/etc/board.json`), so a genuinely fresh flash carries it before this
+script has ever run. Without that arm, a clean flash would not land on the placeholder + radio-off
+posture. The trade-off is that a user whose real network is literally named `OpenWrt` gets re-seeded
+on update.
+
+`99-tessel-hostname` had the same bug and is fixed the same way — it re-asserted the generated
+hostname on every new rootfs, which would silently undo `t2 rename` on every update. It now
+re-stamps only an empty hostname, `OpenWrt`, or a prior auto-stamp (a `tessel-…` name ending in this
+board's stable factory-MAC suffix), so a deliberate rename survives while the auto-stamp still
+follows the release.
+
+**Gated on hardware by a real r4→r5 `t2 update --force`** — the meaningful test, since r4 wrote no
+marker. Everything survived: `ssid`, the WPA key, `encryption`, `disabled='0'`, the custom hostname
+`tessel-lab-bench` set via `t2 rename`, `/etc/dropbear/authorized_keys` (391 B, md5 unchanged at
+`7841d7e26013428a219fec030b0fd481`) and the `/etc/sysupgrade.conf`-listed marker file. The board
+**rejoined WiFi unattended at the same IP on channel 11**, `/etc/tessel-version` read `ab51d6a`, and
+`t2 run --lan` deployed and ran blinky to completion. All of it survived a power cycle.
+
+The guard was then proven directly in **both** directions against the shipped `/rom` scripts:
+
+```
+# real config -> preserved
+BEFORE: ssid=The internets       disabled=0 host=tessel-lab-bench
+sh /rom/etc/uci-defaults/98-tessel-wifi ; sh /rom/etc/uci-defaults/99-tessel-hostname
+AFTER : ssid=The internets       disabled=0 host=tessel-lab-bench
+
+# unconfigured -> still seeds (so the guard is not a no-op)
+BEFORE: ssid=tessel-unconfigured disabled=0 host=OpenWrt
+AFTER : ssid=tessel-unconfigured disabled=1 host=tessel-v25-12-5-node8-r5-5787
+```
 
 ---
 
