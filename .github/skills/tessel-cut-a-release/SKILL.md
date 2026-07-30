@@ -78,15 +78,31 @@ is better than wrong.
 (There is no r3. It was built and superseded by r4 before release. Do not go looking for it
 and do not renumber to fill the gap.)
 
-## Verify the published bytes, not the local ones
+## Publish checksums, then verify the published bytes
 
-After publishing, **download the assets back** and hash what you receive. Do not hash the
-file you uploaded from.
+`make-release-artifacts.sh` prints a SHA-256 for every artifact it builds. Paste those into
+the release body under `## Checksums (SHA-256)`, with a line telling readers to verify
+using `sha256sum <file>` or `Get-FileHash <file> -Algorithm SHA256`.
+
+Then **download the assets back and re-hash them**:
+
+```bash
+gh release download <tag> --dir verify
+sha256sum verify/*
+```
+
+Those are two different claims and only the second one is the useful one. The script
+hashes the files on your disk. Re-hashing a download proves those are the bytes GitHub is
+actually serving.
 
 The reason is not paranoia: on this project an image was nearly "gated" against a stale
 tarball because a local HTTP server from an earlier run was still bound to the port and
 still serving old bytes. The local file was correct; what was served was not. Only hashing
 the *retrieved* bytes catches that class of error.
+
+Note this is checksums only — release artifacts are **not** GPG-signed, which is a known
+gap rather than a decision. Checksums published in the release body are protected by the
+repository's access controls, not by a signature.
 
 ### Required: check the distribution URLs from a logged-out context
 

@@ -118,8 +118,15 @@ $env:T2_FORCE_FLASH = '1'
 node .\bin\tessel-2.js restore --usb
 ```
 
-To flash a specific release, or to work offline, download the asset, serve it locally,
-and point `T2_RESTORE_URL` at it:
+To flash a specific release, or to work offline, download the asset, verify it, serve it
+locally, and point `T2_RESTORE_URL` at it.
+
+Releases from `v25.12.5-node8-r5` onward publish SHA-256 sums in the release notes — check
+your download against them before flashing something onto a board you then have to debug:
+
+```powershell
+Get-FileHash .\tessel-restore.tar.gz -Algorithm SHA256   # sha256sum on Linux/macOS
+```
 
 ```powershell
 # in the folder containing the downloaded tarball

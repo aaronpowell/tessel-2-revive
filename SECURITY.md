@@ -54,11 +54,13 @@ RAM being kept alive as a hobby, not a hardened appliance.
   password so SSH is deterministic. Both values are in this repository. They exist so
   an otherwise-unreachable board can be debugged, and are **not** present in
   production images. Never leave a DIAG image on a board you care about.
-- **Release artifacts are not signed, and checksums are not currently published**
-  alongside them. The build tooling computes SHA-256 for both tarballs
-  (`build/openwrt-incremental/scripts/make-release-artifacts.sh` prints them) but the
-  release notes don't yet record them. Until they do, your only real assurance is that
-  you downloaded over HTTPS from GitHub Releases. This is a known gap.
+- **Release artifacts publish SHA-256 checksums but are not signed.** From
+  `v25.12.5-node8-r5` onward the release notes carry a `## Checksums (SHA-256)` section
+  covering every published asset — verify your download against it before flashing, with
+  `sha256sum <file>` or `Get-FileHash <file> -Algorithm SHA256`. Earlier releases (r1, r2,
+  r4) predate this and have no published sums. Nothing is GPG-signed, so the checksums are
+  protected by GitHub's access controls rather than by a signature; that remains a known
+  gap.
 
 [`docs/security-threat-assessment.md`](docs/security-threat-assessment.md) is a fuller
 assessment written to justify doing the OpenWrt uplift in the first place — it covers
