@@ -1,0 +1,9 @@
+[
+  {
+    "version": "25.12.5-r.4",
+    "released": "2026-07-29T12:05:11.000Z",
+    "sha": "2319761",
+    "tag": "v25.12.5-node8-r4",
+    "archiveUrl": "https://github.com/aaronpowell/tessel-2-revive/releases/download/v25.12.5-node8-r4/tessel-update.tar.gz"
+  }
+]

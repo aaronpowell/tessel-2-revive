@@ -31,20 +31,24 @@ The primary user-facing tool. All `t2 <command>` invocations go through here.
 - Made crash reporter non-blocking when unconfigured (prevents noise in tests)
 - Removed obsolete `npm rebuild --update-binary` flag from postinstall
 - Updated postinstall script so it no longer requires `t2` to be globally linked before `npm install` completes
-- Seeded `resources/releases/builds.json` with the initial fork manifest entry (version `0.0.18`, OpenWrt SHA `c61b3d8...`)
+- Seeded `releases/builds.json` **in this repo** with the update-feed manifest (see
+  [`gaps-and-risks.md`](./gaps-and-risks.md)). The feed moved off `t2-cli` deliberately: artifacts
+  belong with the hardware-validated releases, not with the CLI.
 - Added `.github/workflows/validate-release-manifest.yml` to keep manifest consistent
 - Updated README with WSL2 setup instructions and GitHub artifact layout documentation
 - Updated stale issue/repo URLs
 
-**Artifact configuration (environment variables):**
+**Artifact configuration (environment variables).** Defaults live in `t2-cli/lib/remote.js`; every
+one is overridable so a fork or a local file server can be dropped in without code changes.
 ```
-T2_BUILDS_JSON_URL   — manifest URL  (default: raw GitHub master branch builds.json)
-T2_BUILDS_BASE_URL   — release asset base URL  (default: aaronpowell/t2-cli GitHub Releases)
-T2_FACTORY_URL       — restore/factory tarball URL
-T2_RESTORE_URL       — restore/factory tarball URL (used by current t2-cli code)
+T2_ARTIFACT_REPOSITORY — owner/repo holding the releases  (default: aaronpowell/tessel-2-revive)
+T2_BUILDS_JSON_URL     — update feed  (default: raw.githubusercontent.com/<repo>/main/releases/builds.json)
+T2_RELEASES_BASE_URL   — release asset base URL  (default: github.com/<repo>/releases/download)
+T2_RESTORE_URL         — restore/factory tarball  (default: <repo>/releases/latest/download/tessel-restore.tar.gz)
+T2_PACKAGES_BASE_URL   — binaries  ·  T2_SDK_BASE_URL — SDK  ·  T2_RUSTCC_URL — Rust cross-compiler
 ```
 
-Known archived fallback for restore image:
+Known archived fallback for the original Tessel restore image:
 `https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
 
 ---
@@ -119,21 +123,23 @@ Tooling for assembling and publishing release artifacts.
 
 **What changed:**
 - Reworked from a Tessel-infrastructure publisher into a GitHub-native release/manifest tool
-- Generates `builds.json` manifest pointing to `aaronpowell/t2-cli` GitHub Releases assets
+- Generates the `builds.json` manifest pointing at `aaronpowell/tessel-2-revive` GitHub Releases
 - Added local dry-run / assembly flow (no GitHub credentials required for testing)
 - Added test suite (`tests/release.test.js`)
 - Updated README
 
 **GitHub asset layout expected by t2-cli:**
 ```
-aaronpowell/t2-cli GitHub Releases:
-  Tag: builds
-    → builds/<sha>.tar.gz          (OpenWrt + firmware bundle)
-    → factory/new_build_next.tar.gz (restore/factory image)
+aaronpowell/tessel-2-revive GitHub Releases:
+  Tag: v<openwrt>-node<n>-r<N>          e.g. v25.12.5-node8-r4
+    → tessel-restore.tar.gz             (restore/factory bundle — name is load-bearing,
+                                         t2 restore reads releases/latest/download/<this>)
+    → tessel-update.tar.gz              (sysupgrade bundle for t2 update)
+    → tessel-<ver>-PROD-node<n>-r<N>.bin (raw image for --openwrt-path)
 
-aaronpowell/t2-cli repository:
-  Branch: master
-    → resources/releases/builds.json  (manifest, fetched by update command)
+aaronpowell/tessel-2-revive repository:
+  Branch: main
+    → releases/builds.json              (update feed, fetched by the update command)
 ```
 
 ---

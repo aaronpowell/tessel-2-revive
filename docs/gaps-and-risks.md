@@ -85,40 +85,134 @@ is sometimes needed to re-establish the data interface after heavy restore/flash
 
 ---
 
-## Release artifacts not published to GitHub
+## Release artifacts and the `t2 update` feed
 
-**Status:** 🔄 Partially resolved — **production firmware images are published**; the `t2-cli`
-`builds` release for `t2 update` is still missing.
+**Status:** 🔄 Artifacts published and the feed is written and validated; **blocked on this repo
+being private.**
 
-**What is published:** the production OpenWrt + Node images are attached to GitHub Releases on
-this repo — see
-[`v25.12.5-node8-r2`](https://github.com/aaronpowell/tessel-2-revive/releases/tag/v25.12.5-node8-r2)
-(the `.bin` sysupgrade image plus a `new_build_*.tar.gz` restore bundle for `t2 restore`). That
-covers the normal flashing path documented in
-[`production-image-and-release.md`](./production-image-and-release.md).
+**What is published.** Production images are attached to GitHub Releases on this repo. The current
+recommended image is
+[`v25.12.5-node8-r4`](https://github.com/aaronpowell/tessel-2-revive/releases/tag/v25.12.5-node8-r4)
+(r1 and r2 precede it; r3 was folded into r4 and never cut). Each release carries three assets:
 
-The `t2-release` plumbing is also in place:
-- `t2-release` can assemble and publish artifacts
-- `t2-cli/resources/releases/builds.json` has a manifest entry pointing at `aaronpowell/t2-cli` GitHub Releases
-- Local tarballs are assembled at `t2-release/.release-work/...`
+| Asset | Consumed by |
+| --- | --- |
+| `tessel-restore.tar.gz` | `t2 restore` — full bootloader + image, the destructive recovery path |
+| `tessel-update.tar.gz` | `t2 update` — the sysupgrade path |
+| `tessel-25.12-PROD-node8-rN.bin` | manual `--openwrt-path` flashing |
 
-**What's still missing:** The `t2-cli` GitHub Release tagged `builds` has not been created and populated yet, so `t2 update` (without explicit `--firmware-path` / `--openwrt-path`) will fail with a 404.
+**Asset names are load-bearing.** `t2 restore` resolves
+`releases/latest/download/tessel-restore.tar.gz` by default, so every release must publish that
+exact filename. r1/r2 shipped `new_build_*.tar.gz`, which does *not* satisfy the default URL.
 
-**How to fix:**
-```bash
-cd repos/t2-release
-node lib/release.js --publish  # requires GH_TOKEN with write:packages
-```
+**The update feed.** `releases/builds.json` in this repo is the manifest `t2 update` reads (see
+`t2-cli/lib/remote.js`, `BUILDS_JSON_URL`). Two constraints, both easy to get wrong:
 
-Until then, always use the explicit path flags:
+- `sha` must equal the device's `/etc/tessel-version` **exactly** (trimmed). That file is stamped at
+  build time from the commit the image was built from.
+- `version` must be semver-valid, and prerelease identifiers need a **dotted numeric** part.
+  Use `25.12.5-r.4`, not `25.12.5-r4` — the latter sorts `r10` below `r2` alphanumerically, so the
+  feed would silently stop offering upgrades after the ninth respin.
+
+**Blocker: this repository is private.** `t2-cli` fetches both the feed and the release assets
+anonymously with plain `request` and no auth, so today both 404 for everyone. Verified directly —
+`raw.githubusercontent.com/aaronpowell/tessel-2-revive/main/releases/builds.json` and the release
+asset URLs all return 404 unauthenticated. **The feed cannot work for anyone until the repo is
+public.**
+
+Until then, override the endpoints or pass explicit paths:
+
 ```powershell
+# Point at any reachable mirror
+$env:T2_BUILDS_JSON_URL = 'http://127.0.0.1:8765/builds.json'
+$env:T2_RESTORE_URL     = 'http://127.0.0.1:8765/tessel-restore.tar.gz'
+
+# ...or bypass the feed entirely
 node .\bin\tessel-2.js update `
   --firmware-path <path>\firmware.bin `
   --openwrt-path  <path>\sysupgrade.bin
 ```
 
-For `t2 restore`, if the default `new_build_next.tar.gz` URL is unavailable, use the archived source:
-`https://web.archive.org/web/20201102173433/https://s3.amazonaws.com/builds.tessel.io/custom/new_build_next.tar.gz`
+**Verifying a local mirror — hash the bytes you actually served.** A stale HTTP server from an
+earlier flash can still hold `127.0.0.1:8765` while a new one binds only the IPv6 wildcard, so
+requests silently hit the *old* content and you "gate" an image you never flashed. This happened
+once during the r4 work and was caught only because the served `Content-Length` was ~180 bytes short
+of the file on disk. Always download from the URL and hash **that**, not the file you meant to
+serve.
+
+---
+
+## `t2 update` loses device configuration
+
+**Status:** 🔄 Host-side cause fixed; **image-side cause open.**
+
+`t2 update` logs "Configuration is saved during update" and then returns a board with no WiFi
+credentials and no provisioned SSH key. There were **two independent causes**, and the first
+completely masked the second.
+
+**Cause 1 — t2-cli misdetected the sysupgrade era. FIXED** (`t2-cli` `2296f56`).
+
+`fixOldUpdateScripts()` decides whether to overwrite the device's `/lib/upgrade/common.sh` with a
+bundled 2015 copy by grepping `/rom` for `do_upgrade_stage2`. 18.06 moved that logic out of
+`common.sh`; **21.02 moved it again**, out of `common.sh` entirely and into `/lib/upgrade/stage2`
+and `/lib/upgrade/do_stage2`. The grep therefore finds nothing on 25.12 and classifies a modern
+image as *legacy*.
+
+The flash still succeeds — `do_stage2` calls `default_do_upgrade`, which the legacy copy also
+defines — which is exactly why this went unnoticed. But the two implementations key off different
+variables:
+
+```sh
+# modern  /lib/upgrade/common.sh:312
+[ -n "$UPGRADE_BACKUP" ] && ... mtd -j "$UPGRADE_BACKUP" write - firmware
+# legacy  t2-cli/resources/openwrt/common.sh:221
+[ "$SAVE_CONFIG" -eq 1 ] && ... mtd -j "$CONF_TAR"       write - firmware
+```
+
+The modern ramfs exports only `UPGRADE_BACKUP`. Under the legacy copy the config tarball is never
+appended, preinit finds no `/sysupgrade.tgz`, and the overlay comes up empty.
+
+The fix widens the probe to accept `/lib/upgrade/do_stage2`, `/lib/upgrade/stage2`, or an
+`UPGRADE_BACKUP` reference as conclusively modern. Confirmed on hardware — the old expression
+returns `LEGACY`, the new one `MODERN`, and `Modern sysupgrade detected` now appears in the log.
+
+> **The lesson worth keeping:** this heuristic had *already* been fixed once in this project (at the
+> 19.07 hop) and was still wrong, because 18.06 and 21.02 moved the same logic to two different
+> places. Detecting an image's era by grepping for a function name is a trap — it needs re-fixing
+> at every release that reorganises the upgrade scripts.
+
+**Cause 2 — `98-tessel-wifi` clobbers restored WiFi credentials. OPEN.**
+
+uci-defaults live in the squashfs, so after a sysupgrade — when the overlay is fresh — every script
+in `/rom/etc/uci-defaults/` runs again. `98-tessel-wifi` sets `ssid`/`key`/`disabled`
+**unconditionally**, and it runs *after* preinit has restored `/sysupgrade.tgz`. It therefore
+overwrites the user's real credentials with the `tessel-unconfigured` placeholder and
+`disabled='1'`.
+
+Proven directly on hardware, without a reflash:
+
+```
+uci set wireless.@wifi-iface[0].ssid=PROOF-SSID; ...disabled=0; uci commit wireless
+BEFORE: ssid=PROOF-SSID          disabled=0
+sh /rom/etc/uci-defaults/98-tessel-wifi
+AFTER : ssid=tessel-unconfigured disabled=1
+```
+
+Corroborated end-to-end by a real `t2 update --force` with Cause 1 fixed: the
+`/etc/sysupgrade.conf`-listed marker file **survived**, `/etc/dropbear/authorized_keys` **survived**
+(391 B) — so backup/restore is now working — but the wireless stanza came back at image defaults and
+`wlan0` did not exist. Losing *only* the wireless config is the signature of a post-restore clobber,
+not a failed backup.
+
+**Fix:** guard the credential and enable lines in `build/openwrt-incremental/build.sh` so they seed
+only a genuinely unconfigured radio, leaving the structural settings (mode, network, ifname,
+channel, vendorid, LAN, firewall, umdns) unconditional and idempotent. `encryption` must move inside
+the guard too, or a user on an open or WPA3 network is forced back to `psk2`.
+
+`99-tessel-hostname` should be audited for the same bug class — if it re-asserts the generated
+hostname on every new rootfs it will silently undo `t2 rename` on update. Note that "run once"
+markers written to the overlay are useless here: the overlay reset is precisely the event they need
+to survive.
 
 ---
 
