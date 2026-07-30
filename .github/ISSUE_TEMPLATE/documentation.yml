@@ -1,0 +1,37 @@
+name: Documentation problem
+description: Something in the docs is wrong, stale, or contradicts reality.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation accuracy matters a lot here — a good chunk of this project's
+        history is conclusions that were plausible, written down, and later found to be
+        false. If something in the docs doesn't match what your board actually does,
+        that's worth reporting.
+
+  - type: input
+    id: where
+    attributes:
+      label: Which document
+      placeholder: e.g. docs/getting-started.md, section 4
+    validations:
+      required: true
+
+  - type: textarea
+    id: says
+    attributes:
+      label: What it says
+      description: Quote the passage.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What's actually true, and how you know
+      description: >
+        Command output, a link to the code, a `gh` result — whatever you checked it
+        against. "I think" is fine too; just say which it is.
+    validations:
+      required: true

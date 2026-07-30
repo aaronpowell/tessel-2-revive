@@ -1,0 +1,116 @@
+name: Bug report — hardware / firmware
+description: Something doesn't work on a board, or during flashing, updating or deploying.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Please check the known non-bugs first** — several
+        behaviours look like faults and aren't:
+
+        - `t2 list` never exits. That's by design.
+        - `t2 list` writes to **stderr**, not stdout.
+        - `LIBUSB_TRANSFER_STALL` for up to a minute after replugging is the board booting.
+        - `No Authorized Tessels Found` on the first try, working on the second or third,
+          is a known discovery race — **please retry 2–3 times before filing**.
+        - `t2 update` requires USB and refuses over LAN.
+        - `t2 restore` does not reboot the board. Unplug, replug, wait ~3 minutes.
+
+        More detail in [docs/getting-started.md](https://github.com/aaronpowell/tessel-2-revive/blob/main/docs/getting-started.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        I ran `t2 update` on a board that had joined WiFi. It completed, but afterwards...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Actual output
+      description: >
+        Paste the real output, not a summary. Include the exact command you ran. If it's a
+        device-side problem, `logread | tail -100` from the board helps a lot.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: board-revision
+    attributes:
+      label: Board revision
+      description: Printed on the board itself.
+      placeholder: e.g. r3
+    validations:
+      required: true
+
+  - type: textarea
+    id: tessel-release
+    attributes:
+      label: Contents of /etc/tessel-release and /etc/tessel-version
+      description: >
+        From the board — over LAN, or `node tools/usb-exec.js "cat /etc/tessel-release"`
+        over USB. If /etc/tessel-release doesn't exist, the board predates r1; say so.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: flashed-how
+    attributes:
+      label: How was this board flashed?
+      options:
+        - t2 restore (USB/DFU full recovery)
+        - t2 update (in-place)
+        - Raw .bin flashed manually
+        - It came this way / original 2015 firmware
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - USB
+        - LAN / WiFi
+        - Both
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host OS and Node.js version
+      description: >
+        `node --version`. Development here was on Windows 11; macOS and Linux are
+        untested, so this matters.
+      placeholder: e.g. Windows 11, Node 20.11.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Is it reproducible?
+      description: >
+        Discovery and USB enumeration are racy, so a single failure often isn't a finding.
+      options:
+        - Every time
+        - Most times
+        - Intermittently
+        - Only happened once
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Things you tried, things that made it better or worse, hunches.

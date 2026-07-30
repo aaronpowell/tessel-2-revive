@@ -32,9 +32,9 @@ The "Linux side" (MT7620) is where JavaScript runs. The SAMD21 runs compiled C f
 OpenWrt is a complete operating system, not a stripped-down shim:
 
 - A **Linux kernel** built for the `ramips/mt7620` target.
-- A **userspace** — BusyBox provides `sh`, `tar`, `mkdir`, `mv`, `cat`, `ifconfig`, etc. The CLI relies on exactly these standard Unix commands when it deploys code (`mkdir -p`, `tar -x -C`, `mv`, `rm -rf`). ([`t2-cli/lib/tessel/commands.js`](../repos/t2-cli/lib/tessel/commands.js) lines 78–89)
+- A **userspace** — BusyBox provides `sh`, `tar`, `mkdir`, `mv`, `cat`, `ifconfig`, etc. The CLI relies on exactly these standard Unix commands when it deploys code (`mkdir -p`, `tar -x -C`, `mv`, `rm -rf`). ([`t2-cli/lib/tessel/commands.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/commands.js) lines 78–89)
 - A **package manager**, `opkg` — the whole build system produces `.ipk` packages. Node itself is packaged this way (see §3).
-- An **init system**, `procd` — Tessel's own services are registered as OpenWrt init scripts. The "run my app on boot" service: ([`openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init`](../repos/openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init))
+- An **init system**, `procd` — Tessel's own services are registered as OpenWrt init scripts. The "run my app on boot" service: ([`openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/tessel/tessel-app/files/tessel-app.init))
   ```sh
   #!/bin/sh /etc/rc.common
   START=99
@@ -45,22 +45,32 @@ OpenWrt is a complete operating system, not a stripped-down shim:
       procd_close_instance
   }
   ```
-- **SSH** (Dropbear), **WiFi**, **Ethernet**, **DHCP/DNS** (`dnsmasq`, `odhcpd`) — standard OpenWrt networking. The CLI configures WiFi with `uci`/`ubus` calls. ([`t2-cli/lib/tessel/commands.js`](../repos/t2-cli/lib/tessel/commands.js) lines 69–76, 214–217)
+- **SSH** (Dropbear), **WiFi**, **Ethernet**, **DHCP/DNS** (`dnsmasq`, `odhcpd`) — standard OpenWrt networking. The CLI configures WiFi with `uci`/`ubus` calls. ([`t2-cli/lib/tessel/commands.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/commands.js) lines 69–76, 214–217)
 
 Upstream Tessel describes it the same way: *"The primary processor of the Tessel 2 runs a very lightweight version of Linux called OpenWRT. OpenWRT provides all of the TCP/IP drivers, threading/schedule support, and runs Node, Rust or whatever other language you're using."* ([Tessel Technical Overview](https://tessel.gitbooks.io/t2-docs/content/Debugging/Technical_Overview.html))
 
 ### The specific OpenWrt build
 
-The image is a **very old OpenWrt** — Barrier Breaker era, ~2014 base — targeting `ramips/mt7620`, packaged as a `squashfs-sysupgrade` image (~4.3 MB). The whole OS fits in ~4.3 MB because it's squashfs-compressed for a device with tens of MB of flash. That size constraint explains many limitations below. See [`architecture.md`](architecture.md) "OpenWrt image" and [`repos.md`](repos.md) for the build.
+The image is **OpenWrt 25.12.5 (kernel 6.12.94)** targeting `ramips/mt7620`, packaged
+as a `squashfs-sysupgrade` image (~11 MB). It is squashfs-compressed because the board
+has tens of MB of flash, and that size constraint still explains many of the
+limitations below. See [`architecture.md`](architecture.md) "OpenWrt image" and
+[`production-image-and-release.md`](production-image-and-release.md) for the build.
 
-**Consequence of the age:** frozen at 2018 with no security updates — old OpenSSL, and a Dropbear SSH so old that modern OpenSSH clients reject its key-exchange algorithms without `-oKexAlgorithms=+diffie-hellman-group1-sha1`. Uplifting to a modern OpenWrt (24.10.x) is planned but not started. ([`gaps-and-risks.md`](gaps-and-risks.md) "SSH compatibility" / "OpenWrt upstream uplift")
+**This was not always the case.** The board shipped with OpenWrt **15.05 (Chaos Calmer,
+kernel 3.18, 2015)**, frozen with no security updates — an old OpenSSL, and a Dropbear
+SSH so old that modern OpenSSH clients reject its key exchange without
+`-oKexAlgorithms=+diffie-hellman-group1-sha1`. That is what the uplift fixed; a board
+still on the factory image behaves as described above until it is flashed.
+([`openwrt-incremental-upgrade.md`](openwrt-incremental-upgrade.md),
+[`gaps-and-risks.md`](gaps-and-risks.md) "OpenWrt upstream uplift")
 
 ### Two layers of "OpenWrt" repos
 
 - `openwrt-tessel` is the **overlay / wrapper** — it adds Tessel-specific packages (`node`, `tessel-tools`, `tessel-app`, `tessel-mdns`), board target config, and files.
 - `openwrt` is the **actual OpenWrt source tree** (kernel, BusyBox, build system), included as a submodule of `openwrt-tessel`.
 
-On Windows these two are deliberately *not* checked out (`update = none` in [`.gitmodules`](../.gitmodules)); the `t2-build` Docker flow clones them inside a Linux container instead. ([`README.md`](../README.md) "Cloning on Windows")
+On Windows these two are deliberately *not* checked out (`update = none` in [`.gitmodules`](../.gitmodules)); the containerised build under [`build/openwrt-incremental/`](../build/openwrt-incremental/) fetches its own OpenWrt sources inside a Linux container instead. ([`README.md`](../README.md) "Working with this repo")
 
 ---
 
@@ -68,9 +78,19 @@ On Windows these two are deliberately *not* checked out (`update = none` in [`.g
 
 The Tessel doesn't run a special "Tessel-flavored JavaScript." It runs **stock Node.js**, compiled for the board's CPU and packaged as an OpenWrt package.
 
+> **On the 25.12 production image the packaging differs**, though the conclusion below
+> is unchanged: it is still a stock Node 8.11.3 built from the official source tarball,
+> but it is cross-compiled in an in-ladder OpenWrt **19.07** toolchain and then lifted
+> onto 25.12 under `/opt/tessel`, with `/usr/bin/node` becoming a wrapper that sets
+> `LD_LIBRARY_PATH` and `NODE_PATH`. The `openwrt-tessel` package recipe quoted below is
+> the original in-tree packaging and is still the clearest statement of *what* is built
+> and with which flags. See [`architecture.md`](architecture.md) "Layout on the 25.12
+> production image" and
+> [`production-image-and-release.md`](production-image-and-release.md) for why.
+
 ### The Node package definition
 
-[`openwrt-tessel/package/node/node/Makefile`](../repos/openwrt-tessel/package/node/node/Makefile) is an OpenWrt package recipe that downloads Node's official source tarball and cross-compiles it:
+[`openwrt-tessel/package/node/node/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/node/node/Makefile) is an OpenWrt package recipe that downloads Node's official source tarball and cross-compiles it:
 
 ```makefile
 PKG_NAME:=node
@@ -84,7 +104,7 @@ define Package/node/install
 endef
 ```
 
-So `/usr/bin/node` is a real Node runtime built from `node-v8.11.3.tar.xz` off nodejs.org. The CLI confirms this by literally running `node --version` on the board. ([`t2-cli/lib/tessel/version.js`](../repos/t2-cli/lib/tessel/version.js) lines 13–23)
+So `/usr/bin/node` is a real Node runtime built from `node-v8.11.3.tar.xz` off nodejs.org. The CLI confirms this by literally running `node --version` on the board. ([`t2-cli/lib/tessel/version.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/version.js) lines 13–23)
 
 ### It's a *constrained* Node build
 
@@ -113,7 +133,7 @@ What each flag tells us:
 - **`--without-intl`** — no full ICU, so `Intl` (locale-aware dates/numbers/collation) is absent or English-only.
 - **`--optimize_for_size`** — built to be small, not fast.
 
-The npm client is also packaged and symlinked to `/usr/bin/npm`, but on-device npm is rarely how you install things — the deploy model (§5) bundles dependencies from the host instead. ([`openwrt-tessel/package/node/node/Makefile`](../repos/openwrt-tessel/package/node/node/Makefile) lines 104–108)
+The npm client is also packaged and symlinked to `/usr/bin/npm`, but on-device npm is rarely how you install things — the deploy model (§5) bundles dependencies from the host instead. ([`openwrt-tessel/package/node/node/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/node/node/Makefile) lines 104–108)
 
 ### Why the version matters
 
@@ -132,23 +152,23 @@ Running JS is one thing; blinking an LED or reading a sensor is another.
 
 On the board, `require('tessel')` resolves to a tiny shim installed into `/usr/lib/node/`:
 
-- [`t2-firmware/node/tessel.js`](../repos/t2-firmware/node/tessel.js) is just:
+- [`t2-firmware/node/tessel.js`](https://github.com/aaronpowell/t2-firmware/blob/master/node/tessel.js) is just:
   ```js
   const Tessel = require('./tessel-export');
   module.exports = new Tessel();
   ```
-- The real logic is [`t2-firmware/node/tessel-export.js`](../repos/t2-firmware/node/tessel-export.js). Both are installed to `/usr/lib/node/` by the `tessel-tools` package. ([`openwrt-tessel/package/tessel/tools/Makefile`](../repos/openwrt-tessel/package/tessel/tools/Makefile) lines 36–38)
+- The real logic is [`t2-firmware/node/tessel-export.js`](https://github.com/aaronpowell/t2-firmware/blob/master/node/tessel-export.js). Both are installed to `/usr/lib/node/` by the `tessel-tools` package. ([`openwrt-tessel/package/tessel/tools/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/tessel/tools/Makefile) lines 36–38)
 
 ### The bridge: Unix domain sockets → SPI → SAMD21
 
-`tessel-export.js` doesn't touch hardware directly. It opens **Unix domain sockets** representing the two module ports: ([`t2-firmware/node/tessel-export.js`](../repos/t2-firmware/node/tessel-export.js) lines 311, 694–695)
+`tessel-export.js` doesn't touch hardware directly. It opens **Unix domain sockets** representing the two module ports: ([`t2-firmware/node/tessel-export.js`](https://github.com/aaronpowell/t2-firmware/blob/master/node/tessel-export.js) lines 311, 694–695)
 ```js
 this.sock = net.createConnection({ ... });   // line 311
 A: '/var/run/tessel/port_a',                  // lines 694-695
 B: '/var/run/tessel/port_b'
 ```
 
-Those sockets are served by a C daemon, **`spid`** (the "SPI daemon"), which bridges them to the physical SPI bus connecting the MT7620 to the SAMD21. A second daemon, **`usbexecd`**, accepts commands over USB. Both are C programs built from `t2-firmware/soc/` and installed by the `tessel-tools` package. ([`openwrt-tessel/package/tessel/tools/Makefile`](../repos/openwrt-tessel/package/tessel/tools/Makefile) lines 28–34)
+Those sockets are served by a C daemon, **`spid`** (the "SPI daemon"), which bridges them to the physical SPI bus connecting the MT7620 to the SAMD21. A second daemon, **`usbexecd`**, accepts commands over USB. Both are C programs built from `t2-firmware/soc/` and installed by the `tessel-tools` package. ([`openwrt-tessel/package/tessel/tools/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/tessel/tools/Makefile) lines 28–34)
 
 ```
 your JS:  tessel.led[0].high()
@@ -168,14 +188,14 @@ So the JS API is essentially a **protocol client**: high-level calls get encoded
 
 This directly answers "could we push any npm package." The deploy is a host-side bundling step, not an on-device `npm install`.
 
-1. **Bundle the project on the host.** `t2-cli` collects your entry file *and its `node_modules`*, optionally uglifies, and produces a tarball in memory. ([`t2-cli/lib/tessel/deployment/javascript.js`](../repos/t2-cli/lib/tessel/deployment/javascript.js) — `tarBundle`)
-2. **Create the target dir & untar over SSH/USB** using standard BusyBox commands: ([`t2-cli/lib/tessel/deploy.js`](../repos/t2-cli/lib/tessel/deploy.js) lines 150, 338–339; [`commands.js`](../repos/t2-cli/lib/tessel/commands.js) lines 81–88)
+1. **Bundle the project on the host.** `t2-cli` collects your entry file *and its `node_modules`*, optionally uglifies, and produces a tarball in memory. ([`t2-cli/lib/tessel/deployment/javascript.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deployment/javascript.js) — `tarBundle`)
+2. **Create the target dir & untar over SSH/USB** using standard BusyBox commands: ([`t2-cli/lib/tessel/deploy.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deploy.js) lines 150, 338–339; [`commands.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/commands.js) lines 81–88)
    ```
    mkdir -p /tmp/remote-script/     (Tessel.REMOTE_RUN_PATH)
    tar -x -C /tmp/remote-script/    (fed the bundle on stdin)
    ```
-   Paths are constants: `/tmp/remote-script/` for `t2 run`, moved to `/app/` for `t2 push` (run-on-boot). ([`t2-cli/lib/tessel/tessel.js`](../repos/t2-cli/lib/tessel/tessel.js) lines 136–139)
-3. **Execute `node`:** ([`commands.js`](../repos/t2-cli/lib/tessel/commands.js) lines 48–52)
+   Paths are constants: `/tmp/remote-script/` for `t2 run`, moved to `/app/` for `t2 push` (run-on-boot). ([`t2-cli/lib/tessel/tessel.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/tessel.js) lines 136–139)
+3. **Execute `node`:** ([`commands.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/commands.js) lines 48–52)
    ```js
    js: { execute(rootpath, relpath, options) {
      return flatten(['node', options.binopts, rootpath + relpath, options.subargs]);
@@ -189,15 +209,15 @@ So "pushing an npm package" means: **the package's files get tarred up with your
 
 Pure-JS packages ship as-is and just work (subject to Node 8 syntax). Packages with **native C/C++ addons** (`.node` binaries via `node-gyp`/`binding.gyp`) are different, and the CLI has an entire subsystem for them:
 
-- It scans the bundle for native modules: ([`javascript.js`](../repos/t2-cli/lib/tessel/deployment/javascript.js) line 121)
+- It scans the bundle for native modules: ([`javascript.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deployment/javascript.js) line 121)
   ```js
   var patterns = ['node_modules/**/*.node', 'node_modules/**/binding.gyp'];
   ```
-- For each, it fetches a **precompiled MIPS/OpenWrt binary** from a binary server and swaps it in for your host machine's build (`resolveBinaryModules` / `injectBinaryModules`). The server base URL is configurable. ([`t2-cli/lib/remote.js`](../repos/t2-cli/lib/remote.js) line 36 `PACKAGES_BASE_URL`)
-- If no precompiled binary exists, you get this warning and the deploy is effectively broken for that dependency: ([`javascript.js`](../repos/t2-cli/lib/tessel/deployment/javascript.js) lines 90–104)
+- For each, it fetches a **precompiled MIPS/OpenWrt binary** from a binary server and swaps it in for your host machine's build (`resolveBinaryModules` / `injectBinaryModules`). The server base URL is configurable. ([`t2-cli/lib/remote.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/remote.js) line 36 `PACKAGES_BASE_URL`)
+- If no precompiled binary exists, you get this warning and the deploy is effectively broken for that dependency: ([`javascript.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deployment/javascript.js) lines 90–104)
   > *"Pre-compiled module is missing… 3. The binary may be platform specific and impossible to compile for OpenWRT."*
 
-**Why can't it just compile on the board?** Native addons need `node-gyp`, Python, a C/C++ toolchain, and headers — none of which realistically fit or run on a 4 MB-image, 20 MB-heap router SoC. So Tessel's model is "precompile the popular ones on a server, download the matching binary at deploy time." A module marked `"tessel": { "skipBinary": true }` in its `package.json` can opt out if it doesn't truly need the `.node`. ([`javascript.js`](../repos/t2-cli/lib/tessel/deployment/javascript.js) line 139)
+**Why can't it just compile on the board?** Native addons need `node-gyp`, Python, a C/C++ toolchain, and headers — none of which realistically fit or run on a 4 MB-image, 20 MB-heap router SoC. So Tessel's model is "precompile the popular ones on a server, download the matching binary at deploy time." A module marked `"tessel": { "skipBinary": true }` in its `package.json` can opt out if it doesn't truly need the `.node`. ([`javascript.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deployment/javascript.js) line 139)
 
 ### So: which npm packages can you push?
 
@@ -209,7 +229,7 @@ Pure-JS packages ship as-is and just work (subject to Node 8 syntax). Packages w
 | Native addon **without** a precompiled binary | ❌ No | "impossible to compile for OpenWRT" warning; nothing to run on MIPS. |
 | Anything memory-hungry | ⚠️ Risky | ~20 MB V8 heap ceiling. |
 
-> ⚠️ **Caveat for this fork:** the precompiled-binary server (`PACKAGES_BASE_URL` → GitHub Releases `/binaries`) is not yet populated, and the release plumbing is "ready to publish, not yet done." ([`gaps-and-risks.md`](gaps-and-risks.md) "Release artifacts not published to GitHub"). So today, native modules will fail to resolve unless you point `T2_PACKAGES_BASE_URL` at a source that has them or supply the binary yourself. Pure-JS packages are unaffected.
+> ⚠️ **Caveat for this fork:** the precompiled-binary server (`PACKAGES_BASE_URL` → GitHub Releases `/binaries`) is not populated. Firmware images *are* published — see [Releases](https://github.com/aaronpowell/tessel-2-revive/releases) and [`production-image-and-release.md`](production-image-and-release.md) — but per-package MIPS binaries are not. So native modules will fail to resolve unless you point `T2_PACKAGES_BASE_URL` at a source that has them or supply the binary yourself. Pure-JS packages are unaffected.
 
 ---
 
@@ -217,8 +237,8 @@ Pure-JS packages ship as-is and just work (subject to Node 8 syntax). Packages w
 
 `t2-cli` abstracts two transports behind a common `Connection` interface:
 
-- **USB** — frames go to the SAMD21's USB bridge, which relays over SPI to the SoC. Handled by [`t2-cli/lib/usb-connection.js`](../repos/t2-cli/lib/usb-connection.js) on the host and `usbexecd` on the device. Works with zero prior network setup — this is how you *first* provision a board.
-- **LAN/SSH** — once WiFi/Ethernet is configured, the CLI just SSHes in. Handled by [`t2-cli/lib/lan-connection.js`](../repos/t2-cli/lib/lan-connection.js).
+- **USB** — frames go to the SAMD21's USB bridge, which relays over SPI to the SoC. Handled by [`t2-cli/lib/usb-connection.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/usb-connection.js) on the host and `usbexecd` on the device. Works with zero prior network setup — this is how you *first* provision a board.
+- **LAN/SSH** — once WiFi/Ethernet is configured, the CLI just SSHes in. Handled by [`t2-cli/lib/lan-connection.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/lan-connection.js).
 
 On Windows the USB device (`1209:7551`) may need a WinUSB/libusbK driver via Zadig, and to use it from WSL2 you attach it with `usbipd`. ([`gaps-and-risks.md`](gaps-and-risks.md) "Windows native USB driver"; [`getting-started.md`](getting-started.md) step 2)
 
@@ -259,13 +279,13 @@ t2-cli
 - Repo inventory, OpenWrt age/target, module list — [`repos.md`](repos.md)
 - Node version constraint, native-module reality, SSH/OpenWrt-uplift risks, unpublished binaries — [`gaps-and-risks.md`](gaps-and-risks.md)
 - Flash/run walkthrough, expected versions, hello-world — [`getting-started.md`](getting-started.md)
-- **Node.js OpenWrt package (v8.11.3, soft-float MIPS, 20 MB heap)** — [`repos/openwrt-tessel/package/node/node/Makefile`](../repos/openwrt-tessel/package/node/node/Makefile)
-- **tessel-tools package (installs spid, usbexecd, tessel.js, tessel-export.js)** — [`repos/openwrt-tessel/package/tessel/tools/Makefile`](../repos/openwrt-tessel/package/tessel/tools/Makefile)
-- Run-on-boot procd init — [`repos/openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init`](../repos/openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init)
-- JS hardware shim & port sockets — [`repos/t2-firmware/node/tessel.js`](../repos/t2-firmware/node/tessel.js), [`repos/t2-firmware/node/tessel-export.js`](../repos/t2-firmware/node/tessel-export.js)
-- Deploy/bundle & native-module handling — [`repos/t2-cli/lib/tessel/deployment/javascript.js`](../repos/t2-cli/lib/tessel/deployment/javascript.js), [`repos/t2-cli/lib/tessel/deploy.js`](../repos/t2-cli/lib/tessel/deploy.js), [`repos/t2-cli/lib/tessel/commands.js`](../repos/t2-cli/lib/tessel/commands.js), [`repos/t2-cli/lib/tessel/tessel.js`](../repos/t2-cli/lib/tessel/tessel.js)
-- Binary/artifact URLs — [`repos/t2-cli/lib/remote.js`](../repos/t2-cli/lib/remote.js)
-- On-device Node version probe — [`repos/t2-cli/lib/tessel/version.js`](../repos/t2-cli/lib/tessel/version.js)
+- **Node.js OpenWrt package (v8.11.3, soft-float MIPS, 20 MB heap)** — [`repos/openwrt-tessel/package/node/node/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/node/node/Makefile)
+- **tessel-tools package (installs spid, usbexecd, tessel.js, tessel-export.js)** — [`repos/openwrt-tessel/package/tessel/tools/Makefile`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/tessel/tools/Makefile)
+- Run-on-boot procd init — [`repos/openwrt-tessel/package/tessel/tessel-app/files/tessel-app.init`](https://github.com/aaronpowell/openwrt-tessel/blob/master/package/tessel/tessel-app/files/tessel-app.init)
+- JS hardware shim & port sockets — [`repos/t2-firmware/node/tessel.js`](https://github.com/aaronpowell/t2-firmware/blob/master/node/tessel.js), [`repos/t2-firmware/node/tessel-export.js`](https://github.com/aaronpowell/t2-firmware/blob/master/node/tessel-export.js)
+- Deploy/bundle & native-module handling — [`repos/t2-cli/lib/tessel/deployment/javascript.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deployment/javascript.js), [`repos/t2-cli/lib/tessel/deploy.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/deploy.js), [`repos/t2-cli/lib/tessel/commands.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/commands.js), [`repos/t2-cli/lib/tessel/tessel.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/tessel.js)
+- Binary/artifact URLs — [`repos/t2-cli/lib/remote.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/remote.js)
+- On-device Node version probe — [`repos/t2-cli/lib/tessel/version.js`](https://github.com/aaronpowell/t2-cli/blob/master/lib/tessel/version.js)
 
 ### Upstream / external
 - Tessel 2 Technical Overview — https://tessel.gitbooks.io/t2-docs/content/Debugging/Technical_Overview.html

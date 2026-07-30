@@ -1,2 +1,18 @@
 # Scratch command/flash/restore logs from hardware validation runs
 out/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build outputs and firmware artifacts -- these belong on a GitHub release,
+# not in the repo (they are ~11 MB each)
+*.bin
+*.tar.gz
+*.squashfs
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

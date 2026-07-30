@@ -245,11 +245,43 @@ uci set system.@system[0].hostname='<name>'; uci commit system
    - `sha` must equal the trimmed contents of `/etc/tessel-version` exactly.
    - `version` must be valid semver with a **dotted numeric** prerelease
      (`25.12.5-r.5`, not `-r5`, or `r10` would sort below `r2`).
-   - Keep older entries: `t2 update` looks up the device's current sha in the
-     feed, and a board whose sha is missing hits a crash path.
-8. Verify the **published** bytes, not the local ones — download the assets back
-   and hash them. A stale local server or a mis-uploaded asset is invisible
-   otherwise.
+   - Keep recent entries: `t2 update` looks up the device's current sha in the
+     feed to work out what the board is running. A board whose sha is missing is
+     **not** a crash — since `t2-cli` `f773ea5` the lookup returns `undefined`,
+     `controller.js` guards the deref, and the update proceeds after logging
+     *"Could not match the build running on X to a known release; updating
+     anyway."* What you lose is the version comparison, i.e. the
+     "already on the latest firmware version" check, not correctness.
+   - **r1 and r2 are deliberately absent from the feed.** Those releases only
+     ship `new_build_*.tar.gz`, which is a *restore* bundle (u-boot + squashfs
+     members) rather than the update format, which needs a tarball containing
+     `openwrt.bin`. Adding entries for them would make
+     `t2 update --version 25.12.5-r.1` download a restore bundle and fail
+     confusingly. Boards on r1/r2 should move forward with `t2 restore`.
+8. Publish the checksums. `make-release-artifacts.sh` already prints a SHA-256
+   for each artifact it builds; paste them into the release body under a
+   `## Checksums (SHA-256)` heading, with a line telling readers to verify with
+   `sha256sum <file>` or `Get-FileHash <file> -Algorithm SHA256`.
+9. Verify the **published** bytes, not the local ones — download the assets back
+   and re-hash them, then diff against what you pasted:
+   ```bash
+   gh release download v25.12.5-node8-r5 --dir verify
+   sha256sum verify/*
+   ```
+   This is a different claim from the one the build script makes. The script
+   hashes the files on your disk; only re-hashing a download proves those are
+   the bytes GitHub is serving. A stale local server or a mis-uploaded asset is
+   invisible otherwise.
+10. Check the distribution URLs **anonymously**. `gh` and a signed-in browser
+    return `200` for content that is `404` for everyone else, and `t2-cli`
+    fetches both of these unauthenticated:
+    ```bash
+    curl -sS  -o /dev/null -w '%{http_code}\n' \
+      https://raw.githubusercontent.com/aaronpowell/tessel-2-revive/main/releases/builds.json
+    curl -sSL -o /dev/null -w '%{http_code}\n' \
+      https://github.com/aaronpowell/tessel-2-revive/releases/latest/download/tessel-restore.tar.gz
+    ```
+    Both must print `200` from a logged-out context.
 
 ### Naming
 

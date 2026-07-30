@@ -81,7 +81,7 @@ is sometimes needed to re-establish the data interface after heavy restore/flash
 
 **Resolution:** Upgrade `usbipd-win` to v4+: `winget upgrade usbipd`.
 
-**Remaining risk:** If USB attachment still fails after upgrade, the workaround is to run `t2-cli` natively in Windows PowerShell (not WSL), since Windows already sees the device. The built `.bin` artifacts are accessible via `\\wsl.localhost\Ubuntu\...` UNC paths.
+**Remaining risk:** If USB attachment still fails after upgrade, the workaround is to run `t2-cli` natively in Windows PowerShell (not WSL), since Windows already sees the device. The built `.bin` artifacts are accessible via `\\wsl.localhost\<distro>\...` UNC paths.
 
 ---
 
@@ -238,9 +238,9 @@ The guard was then proven directly in **both** directions against the shipped `/
 
 ```
 # real config -> preserved
-BEFORE: ssid=The internets       disabled=0 host=tessel-lab-bench
+BEFORE: ssid=MyHomeWiFi          disabled=0 host=tessel-lab-bench
 sh /rom/etc/uci-defaults/98-tessel-wifi ; sh /rom/etc/uci-defaults/99-tessel-hostname
-AFTER : ssid=The internets       disabled=0 host=tessel-lab-bench
+AFTER : ssid=MyHomeWiFi          disabled=0 host=tessel-lab-bench
 
 # unconfigured -> still seeds (so the guard is not a no-op)
 BEFORE: ssid=tessel-unconfigured disabled=0 host=OpenWrt
@@ -252,7 +252,8 @@ AFTER : ssid=tessel-unconfigured disabled=1 host=tessel-v25-12-5-node8-r5-5787
 ## OpenWrt upstream uplift
 
 **Status:** ✅ **COMPLETE.** Built, flashed, and hardware-validated end-to-end at
-**OpenWrt 25.12.5 / kernel 6.12.94**, released as `v25.12.5-node8-r2`.
+**OpenWrt 25.12.5 / kernel 6.12.94**, first released as `v25.12.5-node8-r1` and current at
+`v25.12.5-node8-r5`.
 
 The device previously ran **OpenWrt Chaos Calmer 15.05-rc2** (2015, kernel 3.18). It now runs
 25.12.5 with the Tessel JS runtime working: `t2 run` / `t2 push` deploy and execute scripts and
