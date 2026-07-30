@@ -81,7 +81,7 @@ is sometimes needed to re-establish the data interface after heavy restore/flash
 
 **Resolution:** Upgrade `usbipd-win` to v4+: `winget upgrade usbipd`.
 
-**Remaining risk:** If USB attachment still fails after upgrade, the workaround is to run `t2-cli` natively in Windows PowerShell (not WSL), since Windows already sees the device. The built `.bin` artifacts are accessible via `\\wsl.localhost\Ubuntu\...` UNC paths.
+**Remaining risk:** If USB attachment still fails after upgrade, the workaround is to run `t2-cli` natively in Windows PowerShell (not WSL), since Windows already sees the device. The built `.bin` artifacts are accessible via `\\wsl.localhost\<distro>\...` UNC paths.
 
 ---
 
@@ -238,9 +238,9 @@ The guard was then proven directly in **both** directions against the shipped `/
 
 ```
 # real config -> preserved
-BEFORE: ssid=My Home WiFi        disabled=0 host=tessel-lab-bench
+BEFORE: ssid=MyHomeWiFi          disabled=0 host=tessel-lab-bench
 sh /rom/etc/uci-defaults/98-tessel-wifi ; sh /rom/etc/uci-defaults/99-tessel-hostname
-AFTER : ssid=My Home WiFi        disabled=0 host=tessel-lab-bench
+AFTER : ssid=MyHomeWiFi          disabled=0 host=tessel-lab-bench
 
 # unconfigured -> still seeds (so the guard is not a no-op)
 BEFORE: ssid=tessel-unconfigured disabled=0 host=OpenWrt

@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/aaronpowell/tessel-2-revive/security/advisories/new
+    about: >
+      Please report security problems privately, not as a public issue. See SECURITY.md
+      for what is in and out of scope.
+  - name: Original Tessel documentation (archived)
+    url: https://tessel.gitbooks.io/t2-docs/content/
+    about: >
+      Upstream T2 docs from the original project — the place to look for hardware and
+      JS API reference rather than filing an issue here.
+  - name: Original Tessel GitHub organisation (unmaintained)
+    url: https://github.com/tessel
+    about: >
+      The upstream repos this project forked from. Issues about original Tessel
+      behaviour that this project didn't change may belong there.

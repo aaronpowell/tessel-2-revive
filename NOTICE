@@ -1,0 +1,69 @@
+# NOTICE — licensing detail
+
+This repository is a mix of original work and derivative works of GPL-2.0
+projects. `LICENSE` (MIT) does **not** apply to all of it. This file is the
+authoritative breakdown.
+
+## MIT — this repository's own work
+
+Everything not listed in the GPL-2.0 section below, including:
+
+| Path | What it is |
+|---|---|
+| `docs/` | Documentation |
+| `tools/` | `usb-exec.js`, `lan-exec.js` and their README |
+| `tessel-scripts/` | Sample scripts to run on a board |
+| `releases/builds.json` | The `t2 update` feed |
+| `.github/` | Skills, the canvas extension, workflows, templates |
+| `build/openwrt-incremental/Dockerfile`, `docker-compose.yml`, `build.sh`, `scripts/` | Build orchestration written for this project |
+
+Copyright (c) 2026 Aaron Powell, under the MIT licence in `LICENSE`.
+
+## GPL-2.0 — derivative works of Linux and OpenWrt
+
+The following are modifications to, or are compiled into, GPL-2.0 licensed
+projects, and remain **GPL-2.0** regardless of the MIT licence above. They
+cannot be relicensed here, because their copyright is not this project's to
+relicense.
+
+| Path | Derivative of | Licence |
+|---|---|---|
+| `build/openwrt-incremental/overlay/patches/**` | The Linux kernel (ramips/MT7620 SPI and pinmux drivers) | GPL-2.0-only |
+| `build/openwrt-incremental/overlay/dts/Tessel.dts` | Linux device tree sources; `#include`s `mt7620n.dtsi` from the kernel tree | GPL-2.0-only |
+| `build/openwrt-incremental/overlay/tessel-tools/` | An OpenWrt package (`Makefile` follows OpenWrt package conventions; the init and start scripts are installed into an OpenWrt rootfs) | GPL-2.0 |
+| `build/openwrt-incremental/overlay/config.seed`, `overlay/files/`, `overlay/initramfs-diag/` | OpenWrt buildroot and rootfs configuration | GPL-2.0 |
+
+If you are unsure which side of the line a file in
+`build/openwrt-incremental/overlay/` falls on, **treat it as GPL-2.0**.
+
+## Released firmware images
+
+The `.bin` images and the `tessel-restore.tar.gz` / `tessel-update.tar.gz`
+archives published under
+[Releases](https://github.com/aaronpowell/tessel-2-revive/releases) are builds
+of OpenWrt. They aggregate the Linux kernel, musl, BusyBox, U-Boot, Node.js and
+many other components, each under its own licence — predominantly GPL-2.0.
+
+Corresponding source is available from:
+
+- upstream OpenWrt, at the release tag the image was built from (recorded in
+  `/etc/tessel-release` on the device as `OPENWRT_VERSION`), and
+- this repository, for the patches and configuration applied on top —
+  everything under `build/openwrt-incremental/overlay/`.
+
+`build/openwrt-incremental/build.sh` clones stock upstream OpenWrt and applies
+only that overlay, so those two together are the complete source for a given
+image.
+
+## Submodules under `repos/`
+
+Each fork under `repos/` carries its own upstream licence in its own
+repository — check the `LICENSE` file in each one. Nothing in this repository
+alters them. For reference, `t2-cli` and `t2-firmware` originate from Technical
+Machine under the MIT licence; the `openwrt` and `uboot-mt7620` forks are
+GPL-2.0.
+
+## Trademarks
+
+"Tessel" is the name of the original project and company (Technical Machine).
+This is an unaffiliated community revival effort.

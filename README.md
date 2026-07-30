@@ -150,6 +150,39 @@ for the OpenWrt builds. Nothing here is deliberately Windows-only — the CLI is
 Node.js and the image build is containerised — but macOS and Linux are untested, so
 expect to hit small things. Reports welcome.
 
+## Contributing
+
+Issues and pull requests are both welcome — this is a working project, not a
+finished archive. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Bug reports about hardware behaviour are especially useful, and especially useless
+without evidence: please include your board revision, the contents of
+`/etc/tessel-release`, and how you flashed it. The issue template asks for these.
+
+## Licensing
+
+This repository is **MIT** (see [`LICENSE`](LICENSE)) — *for its own work*. That covers
+the documentation, the build orchestration, `tools/`, `tessel-scripts/`, the release
+feed, and the agent skills and canvas extension under `.github/`.
+
+It does **not** cover everything in the repo, and saying otherwise would be a false
+claim about someone else's copyright:
+
+- The kernel patches under `build/openwrt-incremental/overlay/patches/**` are
+  modifications to the **Linux kernel** and remain **GPL-2.0-only**.
+- `build/openwrt-incremental/overlay/dts/Tessel.dts` is a Linux device tree source
+  (it `#include`s `mt7620n.dtsi` from the kernel tree) and is likewise **GPL-2.0**.
+- The rest of `build/openwrt-incremental/overlay/` — the `tessel-tools` OpenWrt
+  package, the buildroot seed config, the rootfs files — is OpenWrt package and
+  configuration content, **GPL-2.0**.
+- The **released firmware images** are OpenWrt builds: aggregations of Linux, musl,
+  BusyBox, U-Boot, Node.js and more, each under its own licence.
+- The **submodules under `repos/`** carry their own upstream licences. Check each one.
+
+[`NOTICE`](NOTICE) has the full breakdown, including where to get corresponding
+source for a released image. If you are unsure which side of the line a file under
+`build/openwrt-incremental/overlay/` falls on, treat it as GPL-2.0.
+
 ## Related
 
 - [github.com/tessel](https://github.com/tessel) — the original Tessel GitHub org
