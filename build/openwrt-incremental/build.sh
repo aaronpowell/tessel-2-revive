@@ -342,9 +342,33 @@ fi
 suffix=""
 [ ${#mac} -ge 4 ] && suffix="-${mac#"${mac%????}"}"
 host="tessel-${reltok}${suffix}"
-uci set system.@system[0].hostname="$host"
-uci commit system
-echo "$host" > /proc/sys/kernel/hostname 2>/dev/null
+# Only (re)assert the generated hostname on a board that has NOT been renamed.
+# Like all uci-defaults this re-runs on the first boot of EVERY new rootfs --
+# including after a `t2 update` sysupgrade that restored /etc/config/system from
+# the preserved config -- so setting it unconditionally would silently undo a
+# user's `t2 rename` on every update. Key off the *current* hostname, never an
+# overlay marker file: the overlay is exactly what sysupgrade replaces, so a
+# marker in it is always wiped by the very event we need protection from. Treat
+# empty, OpenWrt's stock default, or a prior auto-stamp (tessel-...-<mac4>,
+# ending in this board's stable factory-MAC suffix) as "unnamed" and safe to
+# (re)stamp; any other value is a deliberate rename and is left untouched.
+cur="$(uci -q get system.@system[0].hostname)"
+seed=0
+case "$cur" in
+	''|OpenWrt) seed=1 ;;
+	tessel-*)
+		if [ -n "$suffix" ]; then
+			case "$cur" in *"$suffix") seed=1 ;; esac
+		else
+			seed=1
+		fi
+		;;
+esac
+if [ "$seed" = 1 ]; then
+	uci set system.@system[0].hostname="$host"
+	uci commit system
+	echo "$host" > /proc/sys/kernel/hostname 2>/dev/null
+fi
 exit 0
 EOF
     chmod 0755 "$SRC/files/etc/uci-defaults/99-tessel-hostname"
@@ -454,6 +478,7 @@ fi
 
 # Station mode on the first wifi-iface -- the one t2-cli writes to.
 if uci -q get wireless.@wifi-iface[0] >/dev/null; then
+	# Structural settings are idempotent and safe to re-assert on every boot.
 	uci -q set wireless.@wifi-iface[0].mode='sta'
 	uci -q set wireless.@wifi-iface[0].network='wwan'
 	# Pin the kernel interface name. OpenWrt >=21.02 names wireless interfaces
@@ -462,10 +487,37 @@ if uci -q get wireless.@wifi-iface[0] >/dev/null; then
 	# lease lookup. Without this the radio comes up perfectly and every CLI WiFi
 	# command still fails with a confusing "Not found".
 	uci -q set wireless.@wifi-iface[0].ifname='wlan0'
-	uci -q set wireless.@wifi-iface[0].ssid='tessel-unconfigured'
-	uci -q set wireless.@wifi-iface[0].encryption='psk2'
-	uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
-	uci -q set wireless.@wifi-iface[0].disabled='1'
+
+	# Seed the placeholder credentials + radio-off posture ONLY when the radio is
+	# not already carrying a user's network. These uci-defaults live in the
+	# squashfs, so they re-run on the FIRST BOOT OF EVERY NEW ROOTFS -- including
+	# after a `t2 update` sysupgrade that already restored the user's
+	# /etc/config/wireless from /sysupgrade.tgz. Setting ssid/key/encryption/
+	# disabled unconditionally would overwrite the credentials preinit just
+	# restored, silently un-joining the board on every update -- the WiFi half of
+	# the config thrown away even though the backup/restore itself worked.
+	#
+	# Key off the current ssid, NOT an overlay marker file: the overlay is exactly
+	# what sysupgrade replaces, so a marker in it is always wiped. A real joined
+	# network (written by `t2 wifi -n <ssid>`) has a genuine ssid and is preserved.
+	# The values that mean "unconfigured" are: empty; OpenWrt's stock generated
+	# default ('OpenWrt', what a genuinely fresh flash carries before this has ever
+	# run -- required so a clean flash still lands on the placeholder + radio-off
+	# posture); and our own placeholder. A value guard (not a new marker) is also
+	# what lets an already-configured r<=4 board -- which never wrote any marker --
+	# keep its credentials when it updates to this image. Guarding encryption too
+	# avoids forcing psk2 back onto an open or WPA3 network, and a user who enabled
+	# the radio keeps disabled='0' across updates.
+	cur_ssid="$(uci -q get wireless.@wifi-iface[0].ssid)"
+	case "$cur_ssid" in
+		''|OpenWrt|tessel-unconfigured)
+			uci -q set wireless.@wifi-iface[0].ssid='tessel-unconfigured'
+			uci -q set wireless.@wifi-iface[0].encryption='psk2'
+			uci -q set wireless.@wifi-iface[0].key='tessel-unconfigured'
+			uci -q set wireless.@wifi-iface[0].disabled='1'
+			;;
+	esac
+
 	uci -q delete wireless.radio0.disabled
 	# `wifi detect` pins a FIXED channel (ch 1) into radio0 -- correct for an AP,
 	# wrong for a station: the radio parks on ch 1 and never scans 6/11, so it never
