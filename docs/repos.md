@@ -211,7 +211,7 @@ Forked and audited but stored separately (not submodules here — clone individu
 
 | Module | Fork | Upstream | Changes |
 |--------|------|----------|---------|
-| `tessel` | [aaronpowell/tessel](https://github.com/aaronpowell/tessel) | [tessel/t1-runtime](https://github.com/tessel/t1-runtime) | Code fix: modernised tar bundling; removed live-network test dependency |
+| `tessel` (npm name of `t1-cli`) | [aaronpowell/t1-cli](https://github.com/aaronpowell/t1-cli) | [tessel/t1-cli](https://github.com/tessel/t1-cli) | Code fix: modernised tar bundling; removed live-network test dependency |
 | `ambient-attx4` | [aaronpowell/ambient-attx4](https://github.com/aaronpowell/ambient-attx4) | [tessel/ambient-attx4](https://github.com/tessel/ambient-attx4) | Test/metadata modernisation |
 | `climate-si7020` | [aaronpowell/climate-si7020](https://github.com/aaronpowell/climate-si7020) | [tessel/climate-si7020](https://github.com/tessel/climate-si7020) | Test/metadata modernisation |
 | `relay-mono` | [aaronpowell/relay-mono](https://github.com/aaronpowell/relay-mono) | [tessel/relay-mono](https://github.com/tessel/relay-mono) | Test/metadata modernisation |

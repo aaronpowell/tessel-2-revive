@@ -1,6 +1,6 @@
 ---
 name: hardware-debugging-traps
-description: Use when validating a fix, gating a change, or claiming something has been proven — especially against embedded devices, firmware, flashing workflows, or anything where the act of testing can destroy the evidence. A checklist for designing measurements that can actually fail, and for the specific ways a passing test can be measuring nothing at all. Trigger on "verify the fix", "prove it works", "gate this change", "the test passed but", "how do I confirm", "it worked on my machine", or before asserting that a change has been validated.
+description: Use when validating a fix, gating a change, claiming something has been proven, or writing down a technical claim that others will trust later — especially against embedded devices, firmware, flashing workflows, or anything where the act of testing can destroy the evidence. A checklist for designing measurements that can actually fail, and for the specific ways a passing test can be measuring nothing at all. Trigger on "verify the fix", "prove it works", "gate this change", "the test passed but", "how do I confirm", "it worked on my machine", "is this still true", or before asserting that a change has been validated.
 ---
 
 # Measurements that cannot fail prove nothing
@@ -100,6 +100,29 @@ nothing about the build that is supposed to contain it.
 Push the gate as far towards the real artifact and the real user as the cost allows: build
 → flash → power-cycle → exercise the actual feature.
 
+## Trap 7 — a fact that was true when it was written
+
+Every specific claim in a doc, a skill, or a comment is a measurement taken at a moment.
+"OpenWrt's generic kernel config disables `CONFIG_MIPS_FP_SUPPORT`" and "an unknown sha
+crashes the update path" were both true, and one of them stopped being true when someone
+fixed it. A reader six months later cannot tell a durable invariant from a stale
+observation unless you say which version you measured.
+
+This trap is worse than doc rot because it is *self-confirming*: the claim sounds precise,
+so nobody re-checks it, so it survives long after the thing it described changed.
+
+Cheap mitigation, applied at write time:
+
+- Stamp version-specific claims with what they were verified against — the release tag, the
+  kernel version, the commit of the tool whose behaviour you are describing.
+- Say whether the claim is an **invariant** (the MT7620 has no FPU) or a **default** (this
+  release ships that symbol off). Defaults change; invariants do not.
+- Prefer detection over version comparison in code. `build.sh` sniffs the tree for
+  `DEVICE_DTS = $$(SOC)_` instead of testing `>= 21.02`, and that is why the check has
+  survived four subsequent releases untouched.
+- Where you *must* hardcode a boundary, cite the mechanism, not just the number, so the
+  next reader can re-derive it.
+
 ## Practical checklist
 
 Before claiming something is verified:
@@ -113,6 +136,8 @@ Before claiming something is verified:
 6. Did I prove the conditional in both directions?
 7. Did I run it more than once?
 8. Am I asserting on output, or on an exit code that may not mean what I think?
+9. If I am writing this down: is it an invariant or a default, and did I record what
+   version I measured it against?
 
 ## When you are wrong
 

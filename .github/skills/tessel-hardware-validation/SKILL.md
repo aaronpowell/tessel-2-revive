@@ -5,6 +5,13 @@ description: Use when talking to a Tessel 2 board from a dev box — running t2-
 
 # Talking to a Tessel 2 from a dev box
 
+> **Verified: July 2026**, against a board on release `v25.12.5-node8-r5`
+> (`/etc/tessel-version` = `ab51d6a`, OpenWrt 25.12.5, kernel 6.12.94, Node 8.11.3)
+> with `t2-cli` at `2296f56`, from a Windows 11 host.
+>
+> Everything below is **`t2-cli` behaviour**, not protocol. If `t2-cli` has moved on,
+> re-check rather than assume — these are bugs and quirks, and bugs get fixed.
+
 The happy path is in [`docs/getting-started.md`](../../../docs/getting-started.md). This
 skill is the set of behaviours that waste time because they look like failures and are
 not — every one of them cost real debugging effort here.
