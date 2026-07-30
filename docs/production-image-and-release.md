@@ -214,19 +214,58 @@ uci set system.@system[0].hostname='<name>'; uci commit system
 ## 6. Cutting a new release
 
 1. Make the change (or rebuild on a new OpenWrt base).
-2. Build with a bumped `TESSEL_RELEASE` (e.g. `v25.12.5-node8-r2`).
-3. Flash + run the full validation gate above on hardware.
-4. Commit the build changes, tag `main`:
+2. Build with a bumped `TESSEL_RELEASE` (e.g. `v25.12.5-node8-r5`).
+3. Flash **or update** onto hardware and run the full validation gate above.
+   - For anything touching first-boot config, the meaningful test is an
+     **update from the previous release**, not a clean flash — a clean flash
+     has no user config to preserve, so it cannot catch a clobber.
+4. Commit the build change to `main`. The commit sha is stamped into
+   `/etc/tessel-version`, so keep it: fast-forward a build branch rather than
+   re-authoring, or the stamp stops matching the feed.
+5. Package the two tarballs the CLI actually downloads:
    ```bash
-   git tag -a v25.12.5-node8-r2 -m "Tessel 2 production image r2"
-   git push origin v25.12.5-node8-r2
+   build/openwrt-incremental/scripts/make-release-artifacts.sh \
+     --image  <...>-squashfs-sysupgrade.bin \
+     --uboot  openwrt-ramips-mt7620-Default-u-boot.bin \
+     --outdir out
    ```
-5. Create a GitHub release for the tag and attach the flashable image
-   (`tessel-25.12-PROD-node8-r2.bin`) — the image is **not** committed to git, so
-   the release asset is its canonical home.
+   The u-boot image is not rebuilt by this project — reuse the one inside the
+   previous release's `tessel-restore.tar.gz`.
+6. Create the GitHub release, targeting the **full 40-character sha**
+   (`gh release create --target <short-sha>` fails with a 422):
+   ```bash
+   gh release create v25.12.5-node8-r5 --target <full-sha> \
+     out/tessel-update.tar.gz out/tessel-restore.tar.gz \
+     build/openwrt-incremental/output/tessel-25.12-PROD-node8-r5.bin
+   ```
+   **Asset names are load-bearing.** `t2 restore` defaults to
+   `releases/latest/download/tessel-restore.tar.gz`, so the release must be
+   marked latest and must publish that exact filename.
+7. Add an entry to `releases/builds.json` — this is what `t2 update` reads:
+   - `sha` must equal the trimmed contents of `/etc/tessel-version` exactly.
+   - `version` must be valid semver with a **dotted numeric** prerelease
+     (`25.12.5-r.5`, not `-r5`, or `r10` would sort below `r2`).
+   - Keep older entries: `t2 update` looks up the device's current sha in the
+     feed, and a board whose sha is missing hits a crash path.
+8. Verify the **published** bytes, not the local ones — download the assets back
+   and hash them. A stale local server or a mis-uploaded asset is invisible
+   otherwise.
 
 ### Naming
 
 `v<openwrt>-node<major>-r<n>` — the OpenWrt base plus a release counter, so
 rebuilds on the same base (`-r2`, `-r3`, …) are cleanly ordered. The matching
 `BUILD_DATE` inside `/etc/tessel-release` disambiguates further.
+
+### Release history
+
+| release | sha | what it added |
+| --- | --- | --- |
+| `r1` | `c3b37d5` | first production image: 25.12.5 + soft-float node 8.11.3 |
+| `r2` | — | self-naming devices (`/etc/tessel-release`, hostname stamp) |
+| `r4` | `2319761` | station `channel='auto'`; correct `tessel-*.tar.gz` asset names |
+| `r5` | `ab51d6a` | first-boot scripts no longer clobber config restored by `t2 update` |
+
+There is **no r3** — it was built and superseded by r4 before release. r1 and r2
+shipped `new_build_*.tar.gz`, which does *not* match the filename `t2 restore`
+defaults to; that was only corrected at r4.
