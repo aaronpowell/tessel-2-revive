@@ -223,6 +223,14 @@ between the evidence and the prose — and that join is invisible to any process
 - If you are relaying a claim to someone who will act on it, say when you checked. "Open
   as of ten minutes ago" and "open" are different assertions, and only one of them can
   be falsified.
+- **Select the field that can invalidate the reading, not just the fields you want.** A
+  query that omits it returns numbers that are populated, plausible, and meaningless.
+  `gh pr view <n> --json mergeable,changedFiles` on a *closed* pull request returns
+  `CONFLICTING` and a file count with nothing to indicate the pull request is dead —
+  verified against a closed pull request in this repo. Adding `state` costs nothing and
+  is the difference between a measurement and a number. The same shape appears in
+  `git diff --stat` without `origin/main...`: correct output, relative to a base that is
+  not the one anyone will merge against.
 
 ## Trap 10 — a branch that looks healthy but whose ancestry claim is false
 
