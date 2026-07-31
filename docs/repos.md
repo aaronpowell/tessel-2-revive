@@ -166,7 +166,32 @@ OpenWrt overlay and build scripts; defines Tessel-specific packages, configs, an
 | **Branch** | `2018-07-13` |
 | **Local path** | `repos/openwrt` |
 
-Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot (Barrier Breaker era, ~2014 base) with Tessel-specific patches on top.
+Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot — **Chaos Calmer 15.05.x, branched 2018** — with Tessel-specific patches on top.
+
+The base is not written down in prose anywhere; it has to be derived. `openwrt-tessel` pins this tree as a submodule at [`c61b3d89`](https://github.com/tessel/openwrt/commit/c61b3d89a56bbf4209dea75432f506e9dc66d55b) (2018-07-17), and [`include/version.mk`](https://github.com/tessel/openwrt/blob/c61b3d89a56bbf4209dea75432f506e9dc66d55b/include/version.mk) at that commit defaults `VERSION_NUMBER` to `15.05.1` and `VERSION_CODE` to `Chaos Calmer`. Our own `repos/openwrt` pin, `bd81d81`, is 2 commits ahead / 0 behind that base and reports the same version. So this is a **2018 snapshot of a 2015 release** — already ~3 years stale when it was taken.
+
+Two traps in verifying that yourself:
+
+**The SHA is not in `.gitmodules`.** That file holds configuration, and for this submodule it holds four keys — `path`, `url`, `branch = 2018-07-13`, and `update = none`. The `branch` value is date-shaped and matches the **Branch** row above, so it reads like a pin and isn't; it's only a tracking hint. The actual pin is a gitlink in the tree:
+
+```sh
+$ git ls-tree HEAD repos/openwrt
+160000 commit bd81d81a8513e79e8e19851f01f9229ade9746a5	repos/openwrt
+```
+
+**`version.mk` contains no line reading `VERSION_CODE := Chaos Calmer`.** Each variable is assigned from its `CONFIG_*` symbol and then defaulted on the next line if that came back empty:
+
+```make
+VERSION_NUMBER:=$(call qstrip_escape,$(CONFIG_VERSION_NUMBER))
+VERSION_NUMBER:=$(if $(VERSION_NUMBER),$(VERSION_NUMBER),15.05.1)
+
+VERSION_CODE:=$(call qstrip_escape,$(CONFIG_VERSION_NUMBER))
+VERSION_CODE:=$(if $(VERSION_CODE),$(VERSION_CODE),Chaos Calmer)
+```
+
+The defaults are what actually apply here: neither `CONFIG_VERSION_NUMBER` nor `CONFIG_VERSION_NICK` appears anywhere in `openwrt-tessel`. (Note the upstream bug in the second pair — `VERSION_CODE` reads `CONFIG_VERSION_NUMBER`, not `CONFIG_VERSION_NICK`. It doesn't change the answer, since neither symbol is set.)
+
+> **Unresolved:** the pinned base is **15.05.1**, but [`openwrt-tessel/config.mk:77`](https://github.com/aaronpowell/openwrt-tessel/blob/d81c023d18e85bc3ea36b379c7dbb46d12c256ae/config.mk#L77) and the factory boards both say **15.05-rc2**. Nobody has established which commit the 2015 factory images were actually built from. Treat "15.05-rc2" as what shipped and "15.05.1" as what this repo pins; they are not the same tree.
 
 **What changed:**
 - Fixed dead/legacy `git://` source fetch URLs for: `hostapd`, `usign`, `odhcpd`, `libubox`, `firewall`, `netifd`, `iwinfo`, `procd`, `ubox`, `ubus`, `uci`, `jsonfilter`
