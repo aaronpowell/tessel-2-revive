@@ -78,8 +78,8 @@ real code change, not a config tweak.
 
 ## 2. Strategy: clean upstream release + thin Tessel overlay per hop
 
-Rather than dragging the heavily-patched legacy fork
-(`aaronpowell/openwrt @ 2018-07-13`, a Chaos Calmer 15.05.1 snapshot) forward through a
+Rather than dragging the heavily-patched 2014 fork
+(`aaronpowell/openwrt @ 2018-07-13`, a Barrier-Breaker-era snapshot) forward through a
 decade of merge conflicts, **each hop starts from a clean upstream OpenWrt release**
 (which already supports the mt7620 target — the Tessel board is essentially a
 [WRTnode](https://openwrt.org/toh/wrtnode/wrtnode) variant, as the DTS's
