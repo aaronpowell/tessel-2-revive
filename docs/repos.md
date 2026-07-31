@@ -166,7 +166,11 @@ OpenWrt overlay and build scripts; defines Tessel-specific packages, configs, an
 | **Branch** | `2018-07-13` |
 | **Local path** | `repos/openwrt` |
 
-Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot (Barrier Breaker era, ~2014 base) with Tessel-specific patches on top.
+Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot — **Chaos Calmer 15.05.x, branched 2018** — with Tessel-specific patches on top.
+
+The base is not written down in prose anywhere; it has to be derived. `openwrt-tessel` pins this tree as a submodule at [`c61b3d89`](https://github.com/tessel/openwrt/commit/c61b3d89a56bbf4209dea75432f506e9dc66d55b) (2018-07-17), and [`include/version.mk`](https://github.com/tessel/openwrt/blob/c61b3d89a56bbf4209dea75432f506e9dc66d55b/include/version.mk) at that commit defaults `VERSION_NUMBER` to `15.05.1` and `VERSION_CODE` to `Chaos Calmer`. (Read the SHA from the gitlink — `git ls-tree HEAD openwrt` — not from `.gitmodules`, which carries only `path` and `url`.) Our own `repos/openwrt` pin, `bd81d81`, is two commits ahead of that and reports the same version.
+
+> **Unresolved:** the pinned base is **15.05.1**, but [`openwrt-tessel/config.mk:77`](https://github.com/aaronpowell/openwrt-tessel/blob/d81c023d18e85bc3ea36b379c7dbb46d12c256ae/config.mk#L77) and the factory boards both say **15.05-rc2**. Nobody has established which commit the 2015 factory images were actually built from. Treat "15.05-rc2" as what shipped and "15.05.1" as what this repo pins; they are not the same tree.
 
 **What changed:**
 - Fixed dead/legacy `git://` source fetch URLs for: `hostapd`, `usign`, `odhcpd`, `libubox`, `firewall`, `netifd`, `iwinfo`, `procd`, `ubox`, `ubus`, `uci`, `jsonfilter`
