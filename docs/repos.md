@@ -166,7 +166,44 @@ OpenWrt overlay and build scripts; defines Tessel-specific packages, configs, an
 | **Branch** | `2018-07-13` |
 | **Local path** | `repos/openwrt` |
 
-Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot (Barrier Breaker era, ~2014 base) with Tessel-specific patches on top.
+Custom OpenWrt fork for the MT7620 target, and the base the whole uplift started from.
+This is a heavily aged snapshot: **OpenWrt Chaos Calmer 15.05.1**, forked from
+`tessel/openwrt` at [`c61b3d8`](https://github.com/tessel/openwrt/commit/c61b3d89a56bbf4209dea75432f506e9dc66d55b)
+(2018-07-17), with Tessel-specific patches on top.
+
+Verify rather than trust that: in `include/version.mk` at the pinned commit, the version
+defaults are `15.05.1` and `Chaos Calmer`, and the fork is 2 commits ahead of / 0 behind
+that base. 15.05 dates from September 2015, so the tree was already around three years
+stale when it was snapshotted, and a decade stale by the time of the uplift.
+
+Read the defaults, not a literal line — `version.mk` has no line saying
+`VERSION_CODE := Chaos Calmer`. Each variable is assigned from its `CONFIG_*` symbol and
+then defaulted on the next line if that came back empty:
+
+```make
+VERSION_NUMBER:=$(call qstrip_escape,$(CONFIG_VERSION_NUMBER))
+VERSION_NUMBER:=$(if $(VERSION_NUMBER),$(VERSION_NUMBER),15.05.1)
+
+VERSION_CODE:=$(call qstrip_escape,$(CONFIG_VERSION_NUMBER))
+VERSION_CODE:=$(if $(VERSION_CODE),$(VERSION_CODE),Chaos Calmer)
+```
+
+Neither `CONFIG_VERSION_NUMBER` nor `CONFIG_VERSION_NICK` is set by `openwrt-tessel`'s
+`config.mk`, so both defaults are what actually apply. (Note the upstream bug in the
+second pair: `VERSION_CODE` reads `CONFIG_VERSION_NUMBER`, not `CONFIG_VERSION_NICK`.
+It does not affect the conclusion here, since neither symbol is set.)
+
+**Open question — 15.05.1 vs 15.05-rc2.** The pinned tree defaults to `15.05.1`, but the
+same `config.mk` points the package feed at a release candidate:
+
+```make
+CONFIG_VERSION_REPO="http://downloads.openwrt.org/chaos_calmer/15.05-rc2/%S/packages"
+```
+
+and 15.05-rc2 is also what the shipped factory boards report. Nobody has established the
+factory build's provenance, and it is not worth chasing — the uplift replaced the whole
+tree regardless. Recorded so the discrepancy is not mistaken for an error in either
+number.
 
 **What changed:**
 - Fixed dead/legacy `git://` source fetch URLs for: `hostapd`, `usign`, `odhcpd`, `libubox`, `firewall`, `netifd`, `iwinfo`, `procd`, `ubox`, `ubus`, `uci`, `jsonfilter`

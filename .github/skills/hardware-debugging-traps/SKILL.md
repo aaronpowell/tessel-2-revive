@@ -123,6 +123,42 @@ Cheap mitigation, applied at write time:
 - Where you *must* hardcode a boundary, cite the mechanism, not just the number, so the
   next reader can re-derive it.
 
+**The nastier sibling: a fact corrected in some places and left standing in another.** This is
+worse than plain rot, because the corrected copy makes the stale copy look freshly
+verified — the claim now appears in several places, some of them recently touched, which
+reads as corroboration rather than contradiction. A reader who lands on the stale copy has
+no signal at all.
+
+The tempting diagnosis is "the audit was per-file and missed a duplicate". That was wrong
+here, and the real reason is more interesting. **The same claim appeared in four documents
+with two different subjects.** In `how-it-works.md` and `architecture.md` the subject was
+*the image we ship*, so the correct fix was to rewrite the sentence to describe the current
+build — which the audit did. In `docs/repos.md` and `openwrt-incremental-upgrade.md` the
+subject was *the legacy fork repo itself*, where the historical fact is still the point and
+the fix is the correct historical answer, not a substitution with the current version. The
+audit corrected the first kind and never revisited the second.
+
+So the general shape is: **a claim can appear in several places with different subjects,
+and a correction that is right for one is wrong for another.** Finding the instances does
+not tell you what to do with them.
+
+That makes grep necessary but not sufficient — twice over. It will not tell you the right
+correction per subject. And it is not even reliable at the easy half, because the same
+claim gets *worded* differently: grepping `Barrier Breaker` in this repo found one of the
+two surviving instances, because the other read `Barrier-Breaker-era`. A separator-tolerant
+case-insensitive pattern found both.
+
+So, when you correct a factual claim:
+
+- **Grep the tree for the old value before committing** — the wrong version string, the
+  wrong codename, the wrong number. Not the corrected one.
+- **Grep loosely.** Case-insensitive, tolerant of separators and word order. Search for the
+  concept as well as the string.
+- **For each hit, ask what its subject is** before deciding the fix. Same sentence, same
+  wrong fact, potentially different correct answers.
+- **Cite the primary evidence inline** — the pinned commit, the file and line you read it
+  from — so the next person can re-derive it instead of copying it onward.
+
 ## Trap 8 — a warning that is present but not where the mistake happens
 
 "Is it documented?" is the wrong test. The right one is **would a reader hit this before
@@ -151,6 +187,43 @@ documented") that cannot fail in the case you care about, and therefore proves n
 - If a fact is dangerous enough to warrant a warning, it is dangerous enough to interrupt
   the sentence that would otherwise mislead.
 
+## Trap 9 — evidence that exists but never reaches the sentence
+
+Trap 8 is about a warning the *reader* never reaches. This is its inward-facing twin: a
+check **you** ran, that returned the right answer, whose answer never made it into the
+claim you then wrote. The verification is not missing. It is stranded.
+
+This is more dangerous than skipping the check, because you remember checking. The
+memory of having verified is indistinguishable from the memory of what the verification
+said, and only one of those is load-bearing.
+
+Two instances from this repo's own history, both from people who were being careful:
+
+- A reviewer asserted a pull request was still open and asked for a fix to be added to
+  it. It had been squash-merged the day before. They had the means to check and were
+  actively checking other things in the same message; this particular sentence was
+  written from a remembered picture rather than a queried one. The fix would have gone
+  to a branch nobody was going to merge.
+- A second session grepped two files, saw that **both** said `Barrier Breaker`, and then
+  wrote prose describing them as disagreeing with each other. The grep ran. The output
+  was correct. The sentence describing it was not.
+
+Note what these are not: they are not sloppiness, and they are not missing evidence. In
+both cases the correct answer had already been obtained. The defect is in the join
+between the evidence and the prose — and that join is invisible to any process that asks
+"did you verify this?", because the honest answer is yes.
+
+- Verification is not a step you complete, it is a value you have to actually spend. Ask
+  what the check *returned*, not whether it ran.
+- When you write a load-bearing claim, re-read it against the command output still on
+  your screen — not against your recollection of running the command.
+- Be most suspicious of claims about mutable state you looked at *earlier*: PR status,
+  branch tips, release contents, what is deployed. These are the claims that were true
+  when you checked, which is not the same as true when you wrote them down.
+- If you are relaying a claim to someone who will act on it, say when you checked. "Open
+  as of ten minutes ago" and "open" are different assertions, and only one of them can
+  be falsified.
+
 ## Practical checklist
 
 Before claiming something is verified:
@@ -168,6 +241,10 @@ Before claiming something is verified:
    version I measured it against?
 10. Is the warning where the reader will be standing when they make the mistake, or just
     somewhere in the document?
+11. If I corrected a claim: did I grep the tree *loosely* for the old value, and check what
+    each hit's subject is before applying the same fix to all of them?
+12. Does each claim I just wrote match what the check actually returned — or what I
+    remember it returning? For anything mutable, when did I last query it?
 
 ## When you are wrong
 
