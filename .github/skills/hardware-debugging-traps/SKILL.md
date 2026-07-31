@@ -224,6 +224,39 @@ between the evidence and the prose — and that join is invisible to any process
   as of ten minutes ago" and "open" are different assertions, and only one of them can
   be falsified.
 
+## Trap 10 — a branch that looks healthy but whose ancestry claim is false
+
+A branch is not a place. It is **a claim about ancestry**, and after the base repo
+squash-merges your pull request that claim silently becomes false while every local
+signal still says everything is fine: same commits, same branch name, `git status` clean,
+`git log` unchanged. Nothing about the branch tells you it is dead.
+
+A squash merge writes a *new single-parent commit* onto the base. None of your branch's
+commits become ancestors of it. So pushing one more small fix to that branch and opening
+a pull request does not propose your small fix — it re-proposes the entire body of work
+against a base that already contains it, as conflicts and as **deletions** of anything
+that changed after the squash. In this repo that turned an intended one-file edit into a
+25-file pull request that would have rewound `main` if merged.
+
+The dangerous property is that your *intent* is small, so you do not think to measure.
+Two commands, both free, both of which would have caught it immediately:
+
+```sh
+git merge-base --is-ancestor origin/main HEAD   # exit 0 = your branch is built on current main
+git diff --stat origin/main...HEAD              # the actual scope of what you are proposing
+```
+
+- **Scope is a fact you measure, not a property of your intent.** Run the `--stat` before
+  opening any pull request and read it. "I only changed one line" is a statement about
+  what you typed, not about what you are asking someone to merge.
+- After a squash merge, treat the source branch as **dead**. Do not reuse it for a
+  follow-up, however small. Branch fresh from the merged base.
+- Reach for this whenever a diff looks bigger than you expect, contains files you did not
+  edit, or shows deletions you did not write. That is the signature — not a merge
+  problem to be resolved, but a wrong-base problem to be re-branched.
+- The same reasoning applies to any "just one more small change" onto an old branch: the
+  question is never how big your edit was, it is what your base is.
+
 ## Practical checklist
 
 Before claiming something is verified:
@@ -245,6 +278,9 @@ Before claiming something is verified:
     each hit's subject is before applying the same fix to all of them?
 12. Does each claim I just wrote match what the check actually returned — or what I
     remember it returning? For anything mutable, when did I last query it?
+13. Before opening a pull request: is my branch actually built on the current base
+    (`git merge-base --is-ancestor origin/main HEAD`), and does `git diff --stat
+    origin/main...HEAD` show the scope I think I am proposing?
 
 ## When you are wrong
 
