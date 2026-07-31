@@ -176,6 +176,23 @@ defaults are `15.05.1` and `Chaos Calmer`, and the fork is 2 commits ahead of / 
 that base. 15.05 dates from September 2015, so the tree was already around three years
 stale when it was snapshotted, and a decade stale by the time of the uplift.
 
+To read a submodule pin yourself, note that `.gitmodules` is **not** where the commit
+lives — it carries configuration (`path`, `url`, and here also `branch` and `update`) but
+never a SHA. The commit is a gitlink stored in the tree:
+
+```sh
+$ git ls-tree HEAD repos/openwrt
+160000 commit bd81d81a8513e79e8e19851f01f9229ade9746a5	repos/openwrt
+```
+
+Note that `branch = 2018-07-13` in `.gitmodules` is a tracking hint, not the pin. The
+gitlink above is what is actually checked out.
+
+There are two distinct pins in play and it is easy to quote the wrong one. This repo
+pins `repos/openwrt` at `bd81d81`; inside `openwrt-tessel`, its own nested `openwrt`
+submodule is pinned at `c61b3d89`. `bd81d81` is the 2-commits-ahead descendant, so both
+lead to the same base and the same conclusion.
+
 Read the defaults, not a literal line — `version.mk` has no line saying
 `VERSION_CODE := Chaos Calmer`. Each variable is assigned from its `CONFIG_*` symbol and
 then defaulted on the next line if that came back empty:
