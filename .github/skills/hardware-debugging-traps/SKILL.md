@@ -123,6 +123,25 @@ Cheap mitigation, applied at write time:
 - Where you *must* hardcode a boundary, cite the mechanism, not just the number, so the
   next reader can re-derive it.
 
+**The nastier sibling: a fact corrected in one place and left standing in another.** This is
+worse than plain rot, because the corrected copy makes the stale copy look freshly
+verified — the claim now appears in two places, one of them recently touched, which reads
+as corroboration rather than contradiction. A reader who lands on the stale copy has no
+signal at all.
+
+It survives because auditing is naturally per-file: you fix the instance in the document
+you are reading, and a duplicate two directories away never surfaces. This repo shipped
+exactly that — the base OpenWrt version was corrected in one doc while two other files kept
+the wrong codename *and* the wrong year, one of them contradicting itself in a single
+sentence by citing a 2018 branch name as a "2014 fork".
+
+The fix is mechanical, so just do it: **when you correct a factual claim, grep the whole
+tree for the old value before you commit.** Grep the wrong version string, the wrong
+codename, the wrong number — not the corrected one. If the claim is load-bearing, also
+grep for the *concept* rather than the string, since the duplicate may be worded
+differently. Then cite the primary evidence inline (the pinned commit, the file and line
+you read it from) so the next person can re-derive it instead of copying it onward.
+
 ## Trap 8 — a warning that is present but not where the mistake happens
 
 "Is it documented?" is the wrong test. The right one is **would a reader hit this before
@@ -168,6 +187,8 @@ Before claiming something is verified:
    version I measured it against?
 10. Is the warning where the reader will be standing when they make the mistake, or just
     somewhere in the document?
+11. If I corrected a claim: did I grep the tree for the *old* value, in case the same claim
+    is duplicated somewhere I was not looking?
 
 ## When you are wrong
 

@@ -305,11 +305,12 @@ carry-forward ledger — no libgpiod anywhere.
 
 **Second roadmap correction (2026-07-16, from the 25.12 source scoping): 25.12 is kernel 6.12, NOT
 6.6.** Verified directly against `openwrt-25.12`: `target/linux/ramips/Makefile` has
-`KERNEL_PATCHVER:=6.12` (latest tag v25.12.4, linux **6.12.87**, mt7620 has `config-6.12`, no
-`config-6.6`). The prior roadmap assumed 25.12 = k6.6 and would reuse the 24.10 `patches-6.6` deltas —
-so the current `build.sh` `v25.12.*→patches-6.6` map is a **latent bug** (the CS1 patch would install
-into an ignored dir → CS1 break would silently return); it must split into
-`v24.10.*→patches-6.6` / `v25.12.*→patches-6.12`. Everything else still holds at 6.12.87
+`KERNEL_PATCHVER:=6.12` (latest tag at the time of writing was v25.12.4, linux **6.12.87**;
+mt7620 has `config-6.12`, no `config-6.6`). The prior roadmap assumed 25.12 = k6.6 and would reuse
+the 24.10 `patches-6.6` deltas — so the `v25.12.*→patches-6.6` map was a **latent bug** (the CS1
+patch would install into an ignored dir → CS1 break would silently return); it had to split into
+`v24.10.*→patches-6.6` / `v25.12.*→patches-6.12`. **✅ Done — that split is live in `build.sh`
+(`kernel_patch_dir()`), and the shipped image is 25.12.5 / linux 6.12.94.** Everything else still holds at 6.12.87
 (source-verified): **libgpiod still not needed** — `generic/config-6.12` has `CONFIG_GPIO_SYSFS=y` and
 `# CONFIG_GPIO_CDEV is not set`, so sysfs is the *only* userspace GPIO iface at 6.12 (the no-libgpiod
 conclusion is now closed for the entire 6.6 **and** 6.12 path); spidev whitelist still `-EINVAL`s literal

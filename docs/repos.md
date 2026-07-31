@@ -166,7 +166,16 @@ OpenWrt overlay and build scripts; defines Tessel-specific packages, configs, an
 | **Branch** | `2018-07-13` |
 | **Local path** | `repos/openwrt` |
 
-Custom OpenWrt fork for the MT7620 target. This is a heavily aged snapshot (Barrier Breaker era, ~2014 base) with Tessel-specific patches on top.
+Custom OpenWrt fork for the MT7620 target, and the base the whole uplift started from.
+This is a heavily aged snapshot: **OpenWrt Chaos Calmer 15.05.1**, forked from
+`tessel/openwrt` at [`c61b3d8`](https://github.com/tessel/openwrt/commit/c61b3d89a56bbf4209dea75432f506e9dc66d55b)
+(2018-07-17), with Tessel-specific patches on top.
+
+Verify rather than trust that: `include/version.mk` at the pinned commit reads
+`VERSION_NUMBER := 15.05.1` / `VERSION_CODE := Chaos Calmer`, and the fork is 2 commits
+ahead of / 0 behind that base. 15.05 dates from September 2015, so the tree was already
+around three years stale when it was snapshotted, and a decade stale by the time of the
+uplift.
 
 **What changed:**
 - Fixed dead/legacy `git://` source fetch URLs for: `hostapd`, `usign`, `odhcpd`, `libubox`, `firewall`, `netifd`, `iwinfo`, `procd`, `ubox`, `ubus`, `uci`, `jsonfilter`
