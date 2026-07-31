@@ -123,24 +123,41 @@ Cheap mitigation, applied at write time:
 - Where you *must* hardcode a boundary, cite the mechanism, not just the number, so the
   next reader can re-derive it.
 
-**The nastier sibling: a fact corrected in one place and left standing in another.** This is
+**The nastier sibling: a fact corrected in some places and left standing in another.** This is
 worse than plain rot, because the corrected copy makes the stale copy look freshly
-verified — the claim now appears in two places, one of them recently touched, which reads
-as corroboration rather than contradiction. A reader who lands on the stale copy has no
-signal at all.
+verified — the claim now appears in several places, some of them recently touched, which
+reads as corroboration rather than contradiction. A reader who lands on the stale copy has
+no signal at all.
 
-It survives because auditing is naturally per-file: you fix the instance in the document
-you are reading, and a duplicate two directories away never surfaces. This repo shipped
-exactly that — the base OpenWrt version was corrected in one doc while two other files kept
-the wrong codename *and* the wrong year, one of them contradicting itself in a single
-sentence by citing a 2018 branch name as a "2014 fork".
+The tempting diagnosis is "the audit was per-file and missed a duplicate". That was wrong
+here, and the real reason is more interesting. **The same claim appeared in four documents
+with two different subjects.** In `how-it-works.md` and `architecture.md` the subject was
+*the image we ship*, so the correct fix was to rewrite the sentence to describe the current
+build — which the audit did. In `docs/repos.md` and `openwrt-incremental-upgrade.md` the
+subject was *the legacy fork repo itself*, where the historical fact is still the point and
+the fix is the correct historical answer, not a substitution with the current version. The
+audit corrected the first kind and never revisited the second.
 
-The fix is mechanical, so just do it: **when you correct a factual claim, grep the whole
-tree for the old value before you commit.** Grep the wrong version string, the wrong
-codename, the wrong number — not the corrected one. If the claim is load-bearing, also
-grep for the *concept* rather than the string, since the duplicate may be worded
-differently. Then cite the primary evidence inline (the pinned commit, the file and line
-you read it from) so the next person can re-derive it instead of copying it onward.
+So the general shape is: **a claim can appear in several places with different subjects,
+and a correction that is right for one is wrong for another.** Finding the instances does
+not tell you what to do with them.
+
+That makes grep necessary but not sufficient — twice over. It will not tell you the right
+correction per subject. And it is not even reliable at the easy half, because the same
+claim gets *worded* differently: grepping `Barrier Breaker` in this repo found one of the
+two surviving instances, because the other read `Barrier-Breaker-era`. A separator-tolerant
+case-insensitive pattern found both.
+
+So, when you correct a factual claim:
+
+- **Grep the tree for the old value before committing** — the wrong version string, the
+  wrong codename, the wrong number. Not the corrected one.
+- **Grep loosely.** Case-insensitive, tolerant of separators and word order. Search for the
+  concept as well as the string.
+- **For each hit, ask what its subject is** before deciding the fix. Same sentence, same
+  wrong fact, potentially different correct answers.
+- **Cite the primary evidence inline** — the pinned commit, the file and line you read it
+  from — so the next person can re-derive it instead of copying it onward.
 
 ## Trap 8 — a warning that is present but not where the mistake happens
 
@@ -187,8 +204,8 @@ Before claiming something is verified:
    version I measured it against?
 10. Is the warning where the reader will be standing when they make the mistake, or just
     somewhere in the document?
-11. If I corrected a claim: did I grep the tree for the *old* value, in case the same claim
-    is duplicated somewhere I was not looking?
+11. If I corrected a claim: did I grep the tree *loosely* for the old value, and check what
+    each hit's subject is before applying the same fix to all of them?
 
 ## When you are wrong
 
