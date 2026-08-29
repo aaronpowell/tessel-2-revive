@@ -206,6 +206,23 @@ EOF
   # mechanism). Gated behind TESSEL_DIAG so the normal validation image stays
   # clean. Always start from a clean files/ so rebuilds are deterministic.
   rm -rf "$SRC/files"
+  # The MT7620 switch must run without VLAN tagging on Tessel. OpenWrt's generated
+  # network config defaults enable_vlan to 1, which leaves the bare eth0 topology
+  # unable to ARP with the board's external Ethernet path. Keep this in a common
+  # uci-defaults script so it applies to both diagnostic and production images,
+  # including updates that restore an older network config before first boot.
+  mkdir -p "$SRC/files/etc/uci-defaults"
+  cat > "$SRC/files/etc/uci-defaults/97-tessel-ethernet" <<'EOF'
+#!/bin/sh
+# Tessel's external Ethernet path uses the MT7620 switch without VLAN tagging.
+# Re-assert this on every new rootfs so an update also repairs an older config.
+uci -q set network.mt7620=switch
+uci -q set network.mt7620.enable_vlan='0'
+uci -q commit network
+exit 0
+EOF
+  chmod 0755 "$SRC/files/etc/uci-defaults/97-tessel-ethernet"
+  echo "    /etc/uci-defaults/97-tessel-ethernet baked (MT7620 switch VLANs disabled)"
   if [[ "${TESSEL_DIAG:-0}" == "1" && -d "$OVERLAY/files" ]]; then
     echo "==> TESSEL_DIAG=1: baking diagnostic files/ overlay (Wi-Fi AP) ..."
     mkdir -p "$SRC/files"

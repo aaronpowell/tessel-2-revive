@@ -359,13 +359,16 @@ make
 
 ### OpenWrt image (Windows, Linux, or macOS — via Docker)
 ```powershell
-# Works natively from Windows PowerShell with Docker Desktop installed.
-# No need to clone openwrt separately — the container handles it.
-git clone https://github.com/aaronpowell/t2-build.git
-cd t2-build
+# Run from a clone of this repository; Docker Desktop is sufficient on Windows.
+cd <repo-root>\build\openwrt-incremental
+$env:OPENWRT_TAG = 'v25.12.5'
 docker compose run --rm build
 # output appears in ./output/
 ```
+
+The container fetches the matching upstream OpenWrt source and applies the Tessel overlay.
+For the Node.js production image and its required payload, see the
+[production image runbook](production-image-and-release.md#3-building-the-production-image).
 
 The first run takes 1–2 hours (downloads sources + full build). Subsequent runs reuse the build cache and are much faster.
 

@@ -302,6 +302,9 @@ risk of *not* upgrading is preserved in
   moves — the incremental ladder and the containerised build system make this tractable.
 - WiFi station mode on 25.12 is exercised end-to-end (join, DHCP, LAN discovery, `t2 run`
   over WiFi, `t2 rename`) as of the r3 image — see *WiFi station mode and LAN discovery* below.
+- Ethernet on the new `v25.12.5-node8-r7-ethernet-vlan` test image still needs a hardware gate
+  after the DTS and network repairs below. The previous image reported a random `eth0` MAC, had
+  no link/data LEDs, and enabled switch VLANs; the working stock board has VLANs disabled.
 
 ---
 
@@ -375,6 +378,27 @@ Note that after `t2 restore` the USB data interface does not always re-enumerate
 cycle; LAN/SSH still works, so a USB timeout here is not a boot failure. A freshly restored board
 also needs a minute or so before it answers on USB — until then `t2 list` reports
 `LIBUSB_TRANSFER_STALL`, which is the board still booting, not a flash failure.
+
+---
+
+## Ethernet MAC and link LEDs
+
+**Status:** 🛠️ **DTS and network repairs implemented; hardware validation pending.**
+
+The revived 25.12 image's Ethernet interface was using a random locally-administered MAC because
+the modern Ethernet driver no longer consumes the legacy `mtd-mac-address` property by itself.
+The overlay now describes the existing `factory` partition with a fixed NVMEM layout and a
+6-byte cell at offset `0x4`, then supplies that cell through the Ethernet node's modern
+`nvmem-cells`/`nvmem-cell-names = "mac-address"` binding. The legacy property remains in place for
+older incremental hops. The historical active-low `eth_link` (gpio2 pin 3) and `eth_data`
+(gpio2 pin 0) GPIO LEDs are also restored using the current GPIO binding constants.
+
+The fix deliberately does not add an MDIO child or change PHY configuration. The image also
+ships an idempotent `97-tessel-ethernet` first-boot default that sets
+`network.mt7620.enable_vlan=0`; this repairs preserved configs as well as clean flashes because
+the existing revived image had VLANs enabled while the working stock board did not. A 25.12
+build check is sufficient to validate the image contents; the board still needs a later
+flash-and-gate to prove the factory MAC, LED activity, and bidirectional ARP on hardware.
 
 ---
 
